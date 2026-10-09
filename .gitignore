@@ -1,1 +1,6 @@
 song
+*.o
+*.elf
+PARAM.SFO
+test_parser
+EBOOT.PBP

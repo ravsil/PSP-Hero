@@ -1,0 +1,16 @@
+CXX = g++
+CXXFLAGS = -std=c++17 -Wall -Wextra -O2 -Isrc
+
+all: test_parser
+
+test_parser: tools/test_parser.cpp src/chart_parser.cpp src/chart_parser.h
+	$(CXX) $(CXXFLAGS) tools/test_parser.cpp src/chart_parser.cpp -o test_parser
+
+clean:
+	rm -f test_parser
+
+run: test_parser
+	./test_parser song/notes.chart song/song.ini
+
+.PHONY: all clean run
+
