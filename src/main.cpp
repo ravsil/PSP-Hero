@@ -606,9 +606,14 @@ int main(int argc, char* argv[]) {
                 }
 
                 if (strum_hit && !note_hit_this_strum && g_config.strum_required) {
-                    bool lost_streak = (session.streak > 0);
                     session.onOverstrum();
-                    if (lost_streak || (current_time - last_miss_sfx_time > 0.20)) {
+                    if (current_time - last_miss_sfx_time > 0.10) {
+                        SoundEffects::play(SFX_MISS);
+                        last_miss_sfx_time = current_time;
+                    }
+                } else if (!g_config.strum_required && frets_pressed_now != 0 && !note_hit_this_strum) {
+                    session.onOverstrum();
+                    if (current_time - last_miss_sfx_time > 0.10) {
                         SoundEffects::play(SFX_MISS);
                         last_miss_sfx_time = current_time;
                     }
@@ -648,9 +653,8 @@ int main(int argc, char* argv[]) {
                     n.missed = true;
                     n.sustaining = false;
                     n.sustain_dropped = true;
-                    bool lost_streak = (session.streak > 0);
                     session.onMiss();
-                    if (lost_streak || (current_time - last_miss_sfx_time > 0.25)) {
+                    if (current_time - last_miss_sfx_time > 0.10) {
                         SoundEffects::play(SFX_MISS);
                         last_miss_sfx_time = current_time;
                     }

@@ -102,12 +102,11 @@ int SoundEffects::sfxThreadFunc(unsigned int args, void* argp) {
             }
         }
 
-        if (any_active) {
-            // Reserve channel on demand when sounds are active
-            if (channel < 0) {
-                channel = sceAudioChReserve(PSP_AUDIO_NEXT_CHANNEL, SFX_BLOCK_SAMPLES, PSP_AUDIO_FORMAT_STEREO);
-            }
+        if (channel < 0) {
+            channel = sceAudioChReserve(PSP_AUDIO_NEXT_CHANNEL, SFX_BLOCK_SAMPLES, PSP_AUDIO_FORMAT_STEREO);
+        }
 
+        if (any_active) {
             if (channel >= 0) {
                 for (int i = 0; i < SFX_BLOCK_SAMPLES; ++i) {
                     int32_t l = mix_l[i];
@@ -120,13 +119,8 @@ int SoundEffects::sfxThreadFunc(unsigned int args, void* argp) {
                 sceAudioOutputPannedBlocking(channel, s_volume, s_volume, out_block);
             }
         } else {
-            // When all sounds have finished, release the channel so no idle channel starves
-            if (channel >= 0) {
-                sceAudioOutputPannedBlocking(channel, 0, 0, silence_block);
-                sceAudioChRelease(channel);
-                channel = -1;
-            }
-            sceKernelDelayThread(10000); // 10ms sleep while idle
+            // Idle: sleep 5ms to yield CPU without thrashing channel reserve/release
+            sceKernelDelayThread(5000);
         }
     }
 
