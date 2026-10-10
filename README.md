@@ -4,6 +4,9 @@ A full-featured, hardware-accelerated rhythm game engine for the Sony PlayStatio
 
 Built from the ground up in C++17 for the MIPS R4000 processor (333 MHz), **PSP Hero** delivers smooth 60 FPS 3D highway perspective rendering, low-latency audio streaming, dynamic chart parsing, and custom button mapping.
 
+> [!WARNING]
+> **Notice**: This project was developed mostly using AI.
+
 ---
 
 ## Features
