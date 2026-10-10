@@ -51,13 +51,13 @@ ms0:/PSP/GAME/cloneHero/
 ---
 
 ## 4. Default Game Controls
-- **Green Fret**: L-Trigger (default)
-- **Red Fret**: D-Pad UP
-- **Yellow Fret**: D-Pad LEFT
-- **Blue Fret**: Triangle
-- **Orange Fret**: Circle
-- **Strum Up / Down**: D-Pad DOWN / Cross (X)
-- **Star Power**: R-Trigger
+- **Green Fret**: D-Pad Left
+- **Red Fret**: D-Pad Down
+- **Yellow Fret**: Triangle
+- **Blue Fret**: Circle
+- **Orange Fret**: Cross
+- **Strum Up / Down**: D-Pad Up / D-Pad Down
+- **Star Power**: Select / L-Trigger / R-Trigger
 - **Pause Menu**: Start
 
-*Custom controls can be configured in the in-game **Remapper** menu and are saved persistently to `cloneHero_controls.dat`.*
+*Custom controls can be configured in the in-game **Button Remapper** menu and are saved persistently to `config.dat`.*

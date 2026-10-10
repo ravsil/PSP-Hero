@@ -23,7 +23,8 @@ Run the provided Docker build script from the root repository directory:
    `docker run --rm -v $(pwd):/src -w /src pspdev/pspdev:latest make -j$(nproc)`
 2. Compiles all C++ sources with `psp-g++ -std=c++17 -fno-exceptions -fno-rtti -O2 -G0`.
 3. Links object files with required static libraries:
-   `-lstdc++ -lopusfile -lopus -lvorbisidec -logg -lpspaudio -lpsppower -lpspgum -lpspgu -lpsprtc -lm`
+   `-lstdc++ -lopusfile -lopus -logg -lpspaudio -lpsppower -lpspgum -lpspgu -lpsprtc -lm`
+   *(Vorbis decoding is handled by embedded `stb_vorbis`, MP3 via embedded `minimp3`).*
 4. Generates `psphero.elf`, exports symbols via `psp-fixup-imports`, and creates `psphero.prx`.
 5. Encrypts and signs `psphero.prx` with `PrxEncrypter` (enables OFW/CFW execution without "Data corrupted" errors).
 6. Packages `EBOOT.PBP` containing `PARAM.SFO`, `ICON0.PNG`, and the encrypted `psphero.prx`.

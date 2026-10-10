@@ -67,5 +67,5 @@ print("\nAll songs validated:", all_ok)
 ---
 
 ## 4. High Score Persistence
-- High scores are saved to `cloneHero_scores.dat` in binary format (`id:difficulty` mapped to score).
+- High scores are saved to `scores.dat` in binary format (`id:difficulty` mapped to score).
 - Restored automatically whenever `SongManager::scanSongs()` executes.
