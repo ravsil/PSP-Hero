@@ -31,6 +31,17 @@ void GameSession::reset() {
     failed = false;
     completed = false;
     is_paused = false;
+    sustain_score_accumulator = 0.0;
+}
+
+void GameSession::addSustainScore(double seconds) {
+    if (seconds <= 0.0) return;
+    sustain_score_accumulator += seconds * 100.0 * multiplier;
+    if (sustain_score_accumulator >= 1.0) {
+        uint32_t whole = static_cast<uint32_t>(sustain_score_accumulator);
+        score += whole;
+        sustain_score_accumulator -= whole;
+    }
 }
 
 void GameSession::onHit(int lane, double time_diff, int note_count) {

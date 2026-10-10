@@ -29,6 +29,9 @@ struct ChartNote {
     bool is_tap;              // Tap note
     bool hit;                 // Hit state during gameplay / POC
     bool missed;              // Missed state during gameplay / POC
+    bool sustaining;          // Actively being held during sustain
+    bool sustain_dropped;     // Fret released early or missed
+    double sustain_scored_time; // Last timestamp up to which sustain points were scored
 };
 
 // Represents a Star Power phrase

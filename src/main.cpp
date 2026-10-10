@@ -142,7 +142,7 @@ int main(int argc, char* argv[]) {
 #endif
 
         // Global background animation tick
-        g_renderer.updateBackground(dt, 120.0f, session.star_active);
+        g_renderer.updateBackground(dt, 120.0f, false);
 
         // --- STATE MACHINE DISPATCH ---
 
@@ -225,21 +225,30 @@ int main(int argc, char* argv[]) {
         }
         else if (state == STATE_DIFFICULTY_SELECT) {
             const SongItem* song = g_song_manager.getSong(current_song_idx);
-
-            if (buttons_down & PSP_CTRL_UP) {
-                selected_diff_idx = (selected_diff_idx - 1 + 4) % 4;
+            std::vector<std::string> diffs;
+            if (song) {
+                diffs = song->getAvailableDifficulties();
             }
-            if (buttons_down & PSP_CTRL_DOWN) {
-                selected_diff_idx = (selected_diff_idx + 1) % 4;
+            int diff_count = static_cast<int>(diffs.size());
+            if (diff_count > 0 && selected_diff_idx >= diff_count) {
+                selected_diff_idx = diff_count - 1;
+            }
+
+            if (diff_count > 0) {
+                if (buttons_down & PSP_CTRL_UP) {
+                    selected_diff_idx = (selected_diff_idx - 1 + diff_count) % diff_count;
+                }
+                if (buttons_down & PSP_CTRL_DOWN) {
+                    selected_diff_idx = (selected_diff_idx + 1) % diff_count;
+                }
             }
 
             if (buttons_down & PSP_CTRL_CIRCLE) {
                 state = STATE_SONG_SELECT;
             }
 
-            if (buttons_down & PSP_CTRL_CROSS && song) {
-                static const char* diff_names[4] = { "Easy", "Medium", "Hard", "Expert" };
-                std::string chosen_diff = diff_names[selected_diff_idx];
+            if (buttons_down & PSP_CTRL_CROSS && song && diff_count > 0) {
+                std::string chosen_diff = diffs[selected_diff_idx];
 
                 // Load chart file
                 if (ChartParser::loadChartFile(song->chart_path, current_chart_song)) {
@@ -251,8 +260,11 @@ int main(int argc, char* argv[]) {
                     const ChartTrack* track = nullptr;
                     for (const auto& t : current_chart_song.tracks) {
                         if (t.difficulty == chosen_diff) {
-                            track = &t;
-                            break;
+                            if (t.instrument == "Single" || t.instrument == "Guitar") {
+                                track = &t;
+                                break;
+                            }
+                            if (!track) track = &t;
                         }
                     }
                     if (!track) track = current_chart_song.getDefaultTrack();
@@ -403,17 +415,46 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            // Note hitting logic
+            // Note hitting and sustain logic
             if (g_config.autoplay) {
                 // Autoplay mode
                 for (auto& n : current_active_track.notes) {
                     if (n.time_seconds > current_time + 0.1) break; // Future notes
                     if (!n.hit && !n.missed && n.time_seconds <= current_time) {
                         n.hit = true;
-                        held_frets_mask |= (1u << n.lane);
+                        if (n.lane >= 0 && n.lane < 5) {
+                            held_frets_mask |= (1u << n.lane);
+                        }
                         session.onHit(n.lane, 0.0, 1);
                         highway.triggerHitFX(n.lane, session.streak);
                         g_renderer.triggerBackgroundHit(n.lane, 1.0f);
+                        if (n.duration_seconds > 0.05) {
+                            n.sustaining = true;
+                            n.sustain_dropped = false;
+                            n.sustain_scored_time = n.time_seconds;
+                        }
+                    }
+                }
+
+                // Autoplay sustain maintenance
+                for (auto& n : current_active_track.notes) {
+                    if (n.time_seconds > current_time + 0.1) break;
+                    if (n.sustaining) {
+                        double note_end = n.time_seconds + n.duration_seconds;
+                        if (current_time <= note_end) {
+                            if (n.lane >= 0 && n.lane < 5) {
+                                held_frets_mask |= (1u << n.lane);
+                            }
+                            double dt_held = std::min(current_time, note_end) - n.sustain_scored_time;
+                            if (dt_held > 0.0) {
+                                session.addSustainScore(dt_held);
+                                session.rock = std::min(1.0f, session.rock + static_cast<float>(dt_held * 0.02f));
+                                n.sustain_scored_time = std::min(current_time, note_end);
+                            }
+                            highway.triggerSustainFX(n.lane, session.star_active);
+                        } else {
+                            n.sustaining = false;
+                        }
                     }
                 }
             } else {
@@ -449,6 +490,11 @@ int main(int argc, char* argv[]) {
                                 session.onHit(n.lane, diff, 1);
                                 highway.triggerHitFX(n.lane, session.streak);
                                 g_renderer.triggerBackgroundHit(n.lane, 1.0f);
+                                if (n.duration_seconds > 0.05) {
+                                    n.sustaining = true;
+                                    n.sustain_dropped = false;
+                                    n.sustain_scored_time = n.time_seconds;
+                                }
                                 break;
                             }
                         }
@@ -459,11 +505,39 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
+                // Sustain processing for manual play
+                for (auto& n : current_active_track.notes) {
+                    if (n.time_seconds > current_time + 0.1) break;
+                    if (n.sustaining) {
+                        double note_end = n.time_seconds + n.duration_seconds;
+                        bool is_fret_held = (n.lane == LANE_OPEN) || ((held_frets_mask & (1u << n.lane)) != 0);
+
+                        if (is_fret_held && current_time <= note_end) {
+                            double dt_held = std::min(current_time, note_end) - n.sustain_scored_time;
+                            if (dt_held > 0.0) {
+                                session.addSustainScore(dt_held);
+                                session.rock = std::min(1.0f, session.rock + static_cast<float>(dt_held * 0.02f));
+                                n.sustain_scored_time = std::min(current_time, note_end);
+                            }
+                            highway.triggerSustainFX(n.lane, session.star_active);
+                        } else if (!is_fret_held && current_time < note_end) {
+                            // Player let go early
+                            n.sustaining = false;
+                            n.sustain_dropped = true;
+                        } else {
+                            // Reached end naturally
+                            n.sustaining = false;
+                        }
+                    }
+                }
+
                 // Check for missed notes
                 for (auto& n : current_active_track.notes) {
                     if (n.time_seconds > current_time) break; // Future notes cannot be missed yet
                     if (!n.hit && !n.missed && (current_time - n.time_seconds) > HIT_WINDOW) {
                         n.missed = true;
+                        n.sustaining = false;
+                        n.sustain_dropped = true;
                         session.onMiss();
                     }
                 }
@@ -510,7 +584,7 @@ int main(int argc, char* argv[]) {
                 if (song_completed) {
                     audio.pause();
                     const SongItem* song = g_song_manager.getSong(current_song_idx);
-                    if (song) {
+                    if (song && !g_config.autoplay) {
                         uint32_t prev_best = g_song_manager.getBestScore(song->id, current_diff_name);
                         if (session.score > prev_best) {
                             is_new_best = true;
@@ -550,6 +624,9 @@ int main(int argc, char* argv[]) {
                     for (auto& n : current_active_track.notes) {
                         n.hit = false;
                         n.missed = false;
+                        n.sustaining = false;
+                        n.sustain_dropped = false;
+                        n.sustain_scored_time = 0.0;
                     }
                     session.reset();
                     audio.play();
@@ -577,6 +654,9 @@ int main(int argc, char* argv[]) {
                     for (auto& n : current_active_track.notes) {
                         n.hit = false;
                         n.missed = false;
+                        n.sustaining = false;
+                        n.sustain_dropped = false;
+                        n.sustain_scored_time = 0.0;
                     }
                     audio.seek(0.0);
                     audio.play();

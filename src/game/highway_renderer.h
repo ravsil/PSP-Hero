@@ -29,6 +29,7 @@ public:
 
     // Trigger hit visual effects (rings, sparks)
     void triggerHitFX(int lane, int streak);
+    void triggerSustainFX(int lane, bool star_active);
 
     // Update particles and animations
     void update(float dt);
@@ -53,7 +54,7 @@ private:
     float getHighwayHalfWidth(float scale) const;
 
     void renderHighwayBase(double current_time, double travel_time, uint32_t held_frets_mask, bool star_active);
-    void renderNotes(const ChartTrack& track, double current_time, double travel_time);
+    void renderNotes(const ChartTrack& track, double current_time, double travel_time, bool star_active);
     void renderReceptors(uint32_t held_frets_mask);
     void renderEffects();
     void renderHUD(const ChartSong& song, const ChartTrack& track, double current_time, const GameSession& session);

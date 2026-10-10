@@ -184,15 +184,28 @@ void MenuScreens::renderDifficultySelect(const SongItem& song, int selected_diff
     std::string diff_sub = song.title + (song.artist.empty() ? "" : (" - " + song.artist));
     drawHeaderBar("Difficulty", truncateText(diff_sub, 48));
 
-    // List difficulties available in track
-    static const char* all_diffs[4] = { "Easy", "Medium", "Hard", "Expert" };
-    for (int i = 0; i < 4; ++i) {
-        int y = 70 + i * 40;
-        bool sel = (selected_diff == i);
-        bool exists = song.hasDifficulty(all_diffs[i]);
+    std::vector<std::string> diffs = song.getAvailableDifficulties();
+    int count = static_cast<int>(diffs.size());
+    if (count == 0) return;
 
-        int bx = 60, bw = 360, bh = 32;
-        unsigned int col = Renderer::getLaneColor(i);
+    int item_h = 32;
+    int gap = (count <= 2) ? 14 : ((count == 3) ? 10 : 8);
+    int total_h = count * item_h + (count - 1) * gap;
+    int start_y = 56 + (180 - total_h) / 2;
+
+    for (int i = 0; i < count; ++i) {
+        int y = start_y + i * (item_h + gap);
+        bool sel = (selected_diff == i);
+        const std::string& diff_name = diffs[i];
+
+        int bx = 60, bw = 360, bh = item_h;
+        unsigned int col = COLOR_WHITE;
+        if (diff_name == "Easy") col = Renderer::getLaneColor(0);
+        else if (diff_name == "Medium") col = Renderer::getLaneColor(1);
+        else if (diff_name == "Hard") col = Renderer::getLaneColor(2);
+        else if (diff_name == "Expert") col = Renderer::getLaneColor(3);
+        else col = Renderer::getLaneColor(i % 5);
+
         unsigned int bg = sel ? COLOR_RGBA(255, 255, 255, 28) : COLOR_PANEL_BG;
         unsigned int border = sel ? col : COLOR_PANEL_BORDER;
 
@@ -202,17 +215,15 @@ void MenuScreens::renderDifficultySelect(const SongItem& song, int selected_diff
             g_renderer.drawPick(bx - 12, y + bh / 2 - 2, col);
         }
 
-        unsigned int name_col = exists ? (sel ? COLOR_WHITE : COLOR_GRAY) : COLOR_DIM;
-        g_renderer.drawText(bx + 16, y + 11, all_diffs[i], name_col, 1);
+        unsigned int name_col = sel ? COLOR_WHITE : COLOR_GRAY;
+        g_renderer.drawText(bx + 16, y + (bh - 8) / 2, diff_name, name_col, 1);
 
-        // Note count if exists
-        const SongTrackInfo* track = song.getTrackByDifficulty(all_diffs[i]);
-        if (exists && track) {
+        // Note count if track exists
+        const SongTrackInfo* track = song.getTrackByDifficulty(diff_name);
+        if (track && track->note_count > 0) {
             char note_buf[32];
             std::snprintf(note_buf, sizeof(note_buf), "%d notes", track->note_count);
-            g_renderer.drawTextRight(bx + bw - 16, y + 11, note_buf, COLOR_GRAY, 1);
-        } else {
-            g_renderer.drawTextRight(bx + bw - 16, y + 11, "Not in chart", COLOR_DIM, 1);
+            g_renderer.drawTextRight(bx + bw - 16, y + (bh - 8) / 2, note_buf, COLOR_GRAY, 1);
         }
     }
 
@@ -220,7 +231,9 @@ void MenuScreens::renderDifficultySelect(const SongItem& song, int selected_diff
     int hx = 16;
     hx += g_renderer.drawButtonHint(hx, 252, ICON_CROSS, "Play");
     hx += g_renderer.drawButtonHint(hx + 8, 252, ICON_CIRCLE, "Back");
-    hx += g_renderer.drawButtonHint(hx + 8, 252, ICON_DPAD, "Move");
+    if (count > 1) {
+        hx += g_renderer.drawButtonHint(hx + 8, 252, ICON_DPAD, "Move");
+    }
 }
 
 void MenuScreens::renderOptions(int selected_opt) {
@@ -421,8 +434,10 @@ void MenuScreens::renderResults(const SongItem& song, const std::string& diff_na
     std::snprintf(score_buf, sizeof(score_buf), "%lu", static_cast<unsigned long>(session.score));
     g_renderer.drawTextCentered(240, by + 90, score_buf, COLOR_WHITE, 3);
 
-    if (is_new_best) {
+    if (is_new_best && !g_config.autoplay) {
         g_renderer.drawTextCentered(240, by + 118, "NEW BEST SCORE!", COLOR_GOLD, 1);
+    } else if (g_config.autoplay) {
+        g_renderer.drawTextCentered(240, by + 118, "AUTOPLAY - NO SCORE SAVED", COLOR_CYAN, 1);
     }
 
     // Stats Grid - 3 distinct, styled sub-panels

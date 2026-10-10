@@ -54,10 +54,13 @@ struct GameSession {
     bool completed;
     bool is_paused;
 
+    double sustain_score_accumulator;
+
     GameSession();
     void reset();
 
     void onHit(int lane, double time_diff, int streak_mult);
+    void addSustainScore(double seconds);
     void onMiss();
     void onOverstrum();
     void activateStarPower();

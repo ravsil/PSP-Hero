@@ -504,18 +504,19 @@ void Renderer::triggerBackgroundHit(int lane, float strength) {
 }
 
 void Renderer::renderBackground(bool star_power) {
+    (void)star_power;
     // 1. Base dark background
     drawRect(0, 0, SCR_WIDTH, SCR_HEIGHT, COLOR_PAGE);
 
     // 2. Ambient radial glow from center (240, 118)
-    unsigned int tint = star_power ? COLOR_CYAN : COLOR_RGBA((int)m_bg_tint[0], (int)m_bg_tint[1], (int)m_bg_tint[2], 25);
+    unsigned int tint = COLOR_RGBA((int)m_bg_tint[0], (int)m_bg_tint[1], (int)m_bg_tint[2], 25);
     drawCircle(240, 118, 140, tint, true);
     drawCircle(240, 118, 80, tint, true);
 
     // 3. 40 Equalizer Bars along bottom
     for (int i = 0; i < 40; ++i) {
         int lane = i / 8;
-        unsigned int col = star_power ? COLOR_CYAN : getLaneColor(lane);
+        unsigned int col = getLaneColor(lane);
         int bar_h = static_cast<int>(m_bars[i] * 90.0f);
         if (bar_h < 3) bar_h = 3;
 
@@ -536,7 +537,7 @@ void Renderer::renderBackground(bool star_power) {
     for (int i = 0; i < 5; ++i) {
         float a0 = m_ring_rot + i * (6.2831853f / 5.0f);
         float a1 = a0 + (6.2831853f / 5.0f) * 0.76f;
-        unsigned int col = star_power ? COLOR_CYAN : getLaneColor(i);
+        unsigned int col = getLaneColor(i);
         drawArc(static_cast<int>(cx), static_cast<int>(cy), static_cast<int>(r), a0, a1, col, 2);
     }
 }

@@ -204,6 +204,9 @@ void ChartSong::finalizeTiming() {
             }
             n.hit = false;
             n.missed = false;
+            n.sustaining = false;
+            n.sustain_dropped = false;
+            n.sustain_scored_time = 0.0;
 
             // Check chord status
             bool is_chord = false;
@@ -465,6 +468,9 @@ bool ChartParser::parseChartString(const std::string& content, ChartSong& out_so
                     note.is_tap = false;
                     note.hit = false;
                     note.missed = false;
+                    note.sustaining = false;
+                    note.sustain_dropped = false;
+                    note.sustain_scored_time = 0.0;
                     track->notes.push_back(note);
                 }
             } else if (code == "S") {

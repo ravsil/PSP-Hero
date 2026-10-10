@@ -40,6 +40,7 @@ struct SongItem {
 
     bool hasDifficulty(const std::string& diff) const;
     const SongTrackInfo* getTrackByDifficulty(const std::string& diff) const;
+    std::vector<std::string> getAvailableDifficulties() const;
 };
 
 class SongManager {

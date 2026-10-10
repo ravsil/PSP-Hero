@@ -1,5 +1,6 @@
 #include "song_manager.h"
 #include "chart_parser.h"
+#include "config.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -24,11 +25,38 @@ bool SongItem::hasDifficulty(const std::string& diff) const {
 }
 
 const SongTrackInfo* SongItem::getTrackByDifficulty(const std::string& diff) const {
+    const SongTrackInfo* fallback = nullptr;
     for (const auto& t : tracks) {
-        if (t.difficulty == diff) return &t;
+        if (t.difficulty == diff) {
+            if (t.instrument == "Single" || t.instrument == "Guitar") {
+                return &t;
+            }
+            if (!fallback) fallback = &t;
+        }
     }
+    if (fallback) return fallback;
     if (!tracks.empty()) return &tracks[0];
     return nullptr;
+}
+
+std::vector<std::string> SongItem::getAvailableDifficulties() const {
+    std::vector<std::string> result;
+    static const char* standard_order[4] = { "Easy", "Medium", "Hard", "Expert" };
+    for (int i = 0; i < 4; ++i) {
+        if (hasDifficulty(standard_order[i])) {
+            result.push_back(standard_order[i]);
+        }
+    }
+    for (const auto& t : tracks) {
+        if (!t.difficulty.empty() &&
+            std::find(result.begin(), result.end(), t.difficulty) == result.end()) {
+            result.push_back(t.difficulty);
+        }
+    }
+    if (result.empty()) {
+        result.push_back("Expert");
+    }
+    return result;
 }
 
 SongManager::SongManager() {
@@ -322,6 +350,7 @@ uint32_t SongManager::getBestScore(const std::string& song_id, const std::string
 }
 
 void SongManager::setBestScore(const std::string& song_id, const std::string& diff, uint32_t score) {
+    if (g_config.autoplay) return;
     std::string key = song_id + ":" + diff;
     if (score > m_scores[key]) {
         m_scores[key] = score;

@@ -60,6 +60,24 @@ void HighwayRenderer::triggerHitFX(int lane, int streak) {
     }
 }
 
+void HighwayRenderer::triggerSustainFX(int lane, bool star_active) {
+    if (lane < 0 || lane >= 5) return;
+
+    float lx = getLaneX(lane, 1.0f);
+    unsigned int col = star_active ? COLOR_CYAN : Renderer::getLaneColor(lane);
+
+    for (int i = 0; i < 2; ++i) {
+        SparkParticle p;
+        p.x = lx + ((std::rand() % 20) - 10.0f) * 0.4f;
+        p.y = YH - 2.0f;
+        p.vx = ((std::rand() % 100) / 50.0f - 1.0f) * 40.0f;
+        p.vy = -35.0f - ((std::rand() % 100) / 100.0f) * 60.0f;
+        p.life = 0.5f;
+        p.color = col;
+        m_sparks.push_back(p);
+    }
+}
+
 void HighwayRenderer::update(float dt) {
     // Rings
     for (size_t i = 0; i < m_rings.size(); ) {
@@ -142,7 +160,7 @@ void HighwayRenderer::renderHighwayBase(double current_time, double travel_time,
                         COLOR_RGBA(255, 255, 255, 60));
 }
 
-void HighwayRenderer::renderNotes(const ChartTrack& track, double current_time, double travel_time) {
+void HighwayRenderer::renderNotes(const ChartTrack& track, double current_time, double travel_time, bool star_active) {
     if (travel_time <= 0.0) travel_time = 1.7;
 
     // 1. Sustain tails first
@@ -170,8 +188,11 @@ void HighwayRenderer::renderNotes(const ChartTrack& track, double current_time, 
             float w1 = 3.5f * s1;
             float w2 = 3.5f * s2;
 
-            unsigned int col = Renderer::getLaneColor(note.lane);
-            unsigned int tail_col = (col & 0x00FFFFFF) | 0x90000000;
+            bool is_dead = note.missed || note.sustain_dropped;
+            unsigned int col = is_dead ? COLOR_RGBA(110, 110, 120, 255) :
+                               (star_active ? COLOR_CYAN : Renderer::getLaneColor(note.lane));
+            unsigned int tail_col = is_dead ? COLOR_RGBA(60, 60, 70, 70) :
+                                    ((col & 0x00FFFFFF) | (note.sustaining ? 0xD0000000 : 0x90000000));
 
             g_renderer.drawQuad(static_cast<int>(x1 - w1), static_cast<int>(y1),
                                 static_cast<int>(x1 + w1), static_cast<int>(y1),
@@ -179,10 +200,13 @@ void HighwayRenderer::renderNotes(const ChartTrack& track, double current_time, 
                                 static_cast<int>(x2 - w2), static_cast<int>(y2),
                                 tail_col);
 
-            // Center glow line
-            g_renderer.drawLine(static_cast<int>(x1), static_cast<int>(y1),
-                                static_cast<int>(x2), static_cast<int>(y2),
-                                COLOR_RGBA(255, 255, 255, 180));
+            // Center glow line (only when alive/sustaining)
+            if (!is_dead) {
+                unsigned int line_col = (star_active || note.sustaining) ? COLOR_WHITE : COLOR_RGBA(255, 255, 255, 180);
+                g_renderer.drawLine(static_cast<int>(x1), static_cast<int>(y1),
+                                    static_cast<int>(x2), static_cast<int>(y2),
+                                    line_col);
+            }
         }
     }
 
@@ -200,25 +224,27 @@ void HighwayRenderer::renderNotes(const ChartTrack& track, double current_time, 
         if (y < YT || y > SCR_H + 10) continue;
 
         if (note.lane == LANE_OPEN) {
-            // Open strum purple bar across all lanes
+            // Open strum bar (purple or electric cyan in star power)
             float hw = getHighwayHalfWidth(s) * 0.92f;
             int bar_h = std::max(3, static_cast<int>(6.0f * s));
+            unsigned int open_col = star_active ? COLOR_CYAN : COLOR_LANE_OPEN;
             g_renderer.drawRoundedRect(static_cast<int>(CX - hw), static_cast<int>(y - bar_h / 2),
                                        static_cast<int>(hw * 2), bar_h, 2,
-                                       COLOR_LANE_OPEN, COLOR_WHITE);
+                                       open_col, COLOR_WHITE);
         } else if (note.lane >= 0 && note.lane < 5) {
             float x = getLaneX(note.lane, s);
             float rx = 13.0f * s;
             float ry = 8.6f * s;
 
-            unsigned int col = note.missed ? COLOR_GRAY : Renderer::getLaneColor(note.lane);
+            unsigned int col = note.missed ? COLOR_GRAY :
+                               (star_active ? COLOR_CYAN : Renderer::getLaneColor(note.lane));
 
             // Dark outer rim
             g_renderer.drawEllipse(static_cast<int>(x), static_cast<int>(y),
                                    static_cast<int>(rx + 2.0f * s), static_cast<int>(ry + 2.0f * s),
                                    COLOR_RGBA(6, 5, 10, 255), true);
 
-            // Colored body
+            // Colored body (Cyan/Blue in star power!)
             g_renderer.drawEllipse(static_cast<int>(x), static_cast<int>(y),
                                    static_cast<int>(rx), static_cast<int>(ry),
                                    col, true);
@@ -401,14 +427,14 @@ void HighwayRenderer::render(const ChartSong& song,
                              bool is_paused) {
     (void)is_paused;
 
-    // 1. Reactive Background
-    g_renderer.renderBackground(session.star_active);
+    // 1. Reactive Background (keep normal background, do NOT turn all blue)
+    g_renderer.renderBackground(false);
 
     // 2. Highway Base & Rails
     renderHighwayBase(current_time, travel_time, held_frets_mask, session.star_active);
 
-    // 3. Notes & Sustains
-    renderNotes(track, current_time, travel_time);
+    // 3. Notes & Sustains (notes turn blue in Star Power)
+    renderNotes(track, current_time, travel_time, session.star_active);
 
     // 4. Receptors at strikeline
     renderReceptors(held_frets_mask);
