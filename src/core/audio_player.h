@@ -34,6 +34,7 @@ public:
     // Status queries
     bool isLoaded() const { return m_loaded; }
     bool isPlaying() const { return m_playing; }
+    bool isEnded() const { return m_ended; }
     double getTimeSeconds() const;
     double getTotalDurationSeconds() const { return m_total_duration; }
     int getSampleRate() const { return m_sample_rate; }
@@ -44,6 +45,8 @@ public:
 private:
     bool m_loaded;
     volatile bool m_playing;
+    volatile bool m_ended;
+    volatile bool m_eof_reached;
     volatile bool m_thread_running;
     volatile bool m_seek_requested;
     double m_seek_target_seconds;

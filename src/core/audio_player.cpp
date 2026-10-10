@@ -18,6 +18,8 @@
 AudioPlayer::AudioPlayer()
     : m_loaded(false)
     , m_playing(false)
+    , m_ended(false)
+    , m_eof_reached(false)
     , m_thread_running(false)
     , m_seek_requested(false)
     , m_seek_target_seconds(0.0)
@@ -85,6 +87,10 @@ void AudioPlayer::decodeChunk() {
         if (of) {
             if (m_use_src_channel) {
                 frames_read = op_read_stereo(of, m_ring_buffer + m_ring_write_head * 2, to_read * 2);
+                if (frames_read <= 0) {
+                    m_eof_reached = true;
+                    frames_read = 0;
+                }
             } else {
                 // 48kHz to 44.1kHz software fallback resampler
                 const double ratio = 48000.0 / 44100.0;
@@ -103,6 +109,9 @@ void AudioPlayer::decodeChunk() {
                     int read_48k = op_read_stereo(of, m_decode_buf_48k + remain * 2, frames_to_read * 2);
                     if (read_48k > 0) {
                         m_decode_avail_48k = remain + read_48k;
+                    } else {
+                        m_decode_avail_48k = remain;
+                        m_eof_reached = true;
                     }
                 }
                 while (static_cast<int>(m_resample_src_pos) + 1 < m_decode_avail_48k &&
@@ -134,10 +143,12 @@ void AudioPlayer::decodeChunk() {
                     if (bytes_read > 0) {
                         total_frames += bytes_read / 4;
                     } else if (bytes_read == 0) {
+                        m_eof_reached = true;
                         break; // EOF
                     } else if (bytes_read == OV_HOLE) {
                         continue; // Bitstream hole, retry
                     } else {
+                        m_eof_reached = true;
                         break; // Fatal error
                     }
                 }
@@ -157,10 +168,12 @@ void AudioPlayer::decodeChunk() {
                         }
                         total_frames += read_samples;
                     } else if (bytes_read == 0) {
+                        m_eof_reached = true;
                         break;
                     } else if (bytes_read == OV_HOLE) {
                         continue;
                     } else {
+                        m_eof_reached = true;
                         break;
                     }
                 }
@@ -179,6 +192,7 @@ void AudioPlayer::decodeChunk() {
                     if (samples_read > 0) {
                         total_frames += samples_read / 2;
                     } else {
+                        m_eof_reached = true;
                         break;
                     }
                 }
@@ -195,6 +209,7 @@ void AudioPlayer::decodeChunk() {
                         }
                         total_frames += samples_read;
                     } else {
+                        m_eof_reached = true;
                         break;
                     }
                 }
@@ -263,6 +278,8 @@ void AudioPlayer::runAudioLoop() {
             m_current_samples = target_samples;
             sceRtcGetCurrentTick(&m_last_block_tick);
             m_seek_requested = false;
+            m_ended = false;
+            m_eof_reached = false;
 
             // Pre-fill ring buffer
             for (int i = 0; i < 8 && m_thread_running; ++i) {
@@ -271,7 +288,7 @@ void AudioPlayer::runAudioLoop() {
         }
 
         // Maintain ring buffer (~8k to 12k frames)
-        if (m_ring_count < 12288) {
+        if (m_ring_count < 12288 && !m_eof_reached) {
             decodeChunk();
         }
 
@@ -284,6 +301,10 @@ void AudioPlayer::runAudioLoop() {
             }
             sceKernelDelayThread(2000); // 2ms sleep to yield CPU
             continue;
+        }
+
+        if (m_total_samples > 0 && m_current_samples >= m_total_samples) {
+            m_ended = true;
         }
 
         if (m_ring_count >= AUDIO_BLOCK_SAMPLES) {
@@ -307,12 +328,44 @@ void AudioPlayer::runAudioLoop() {
             }
             m_current_samples += AUDIO_BLOCK_SAMPLES;
         } else {
-            // Underrun protection: decode one chunk and output silence block
-            decodeChunk();
-            if (m_use_src_channel) {
-                sceAudioSRCOutputBlocking(0, silence_block);
+            if (m_eof_reached) {
+                m_ended = true;
+                if (m_ring_count > 0) {
+                    for (int i = 0; i < m_ring_count; ++i) {
+                        int read_idx = (m_ring_read_tail + i) % RING_BUFFER_FRAMES;
+                        out_block[i * 2]     = m_ring_buffer[read_idx * 2];
+                        out_block[i * 2 + 1] = m_ring_buffer[read_idx * 2 + 1];
+                    }
+                    for (int i = m_ring_count; i < AUDIO_BLOCK_SAMPLES; ++i) {
+                        out_block[i * 2]     = 0;
+                        out_block[i * 2 + 1] = 0;
+                    }
+                    m_current_samples += m_ring_count;
+                    m_ring_count = 0;
+                    m_ring_read_tail = 0;
+                    sceRtcGetCurrentTick(&m_last_block_tick);
+                    if (m_use_src_channel) {
+                        sceAudioSRCOutputBlocking(m_volume, out_block);
+                    } else {
+                        sceAudioOutputPannedBlocking(m_audio_channel, m_volume, m_volume, out_block);
+                    }
+                } else {
+                    // Output silence block when stream has completely ended
+                    if (m_use_src_channel) {
+                        sceAudioSRCOutputBlocking(0, silence_block);
+                    } else {
+                        sceAudioOutputPannedBlocking(m_audio_channel, 0, 0, silence_block);
+                    }
+                    sceKernelDelayThread(4000); // 4ms sleep to yield CPU
+                }
             } else {
-                sceAudioOutputPannedBlocking(m_audio_channel, 0, 0, silence_block);
+                // Underrun protection: decode one chunk and output silence block
+                decodeChunk();
+                if (m_use_src_channel) {
+                    sceAudioSRCOutputBlocking(0, silence_block);
+                } else {
+                    sceAudioOutputPannedBlocking(m_audio_channel, 0, 0, silence_block);
+                }
             }
         }
     }
@@ -334,6 +387,8 @@ bool AudioPlayer::init(const std::string& filepath) {
     shutdown();
 
     m_loaded = false;
+    m_ended = false;
+    m_eof_reached = false;
     m_use_fallback_clock = true;
     m_current_samples = 0;
     m_total_samples = 0;
@@ -513,6 +568,8 @@ void AudioPlayer::seek(double seconds) {
     m_seek_target_seconds = seconds;
     m_seek_requested = true;
     m_clock_offset = seconds;
+    m_ended = false;
+    m_eof_reached = false;
 
 #ifdef __PSP__
     sceRtcGetCurrentTick(&m_playback_start_tick);
@@ -540,8 +597,10 @@ double AudioPlayer::getTimeSeconds() const {
         double sub_block = 0.0;
         if (m_last_block_tick > 0 && now >= m_last_block_tick) {
             sub_block = static_cast<double>(now - m_last_block_tick) / freq;
-            double max_sub = static_cast<double>(AUDIO_BLOCK_SAMPLES) / m_sample_rate;
-            if (sub_block > max_sub) sub_block = max_sub;
+            if (!m_ended) {
+                double max_sub = static_cast<double>(AUDIO_BLOCK_SAMPLES) / m_sample_rate;
+                if (sub_block > max_sub) sub_block = max_sub;
+            }
         }
 
         return (static_cast<double>(m_current_samples) / m_sample_rate) + sub_block;
@@ -567,6 +626,8 @@ double AudioPlayer::getTimeSeconds() const {
 void AudioPlayer::shutdown() {
     m_playing = false;
     m_thread_running = false;
+    m_ended = false;
+    m_eof_reached = false;
 
 #ifdef __PSP__
     if (m_thread_id >= 0) {

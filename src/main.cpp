@@ -471,19 +471,54 @@ int main(int argc, char* argv[]) {
 
             // Check song failure or completion
             if (session.failed) {
-                audio.togglePause();
+                audio.pause();
                 state = STATE_RESULTS;
-            } else if (current_time > current_chart_song.total_duration_seconds + 2.5 && current_chart_song.total_duration_seconds > 0.0) {
-                audio.togglePause();
-                const SongItem* song = g_song_manager.getSong(current_song_idx);
-                if (song) {
-                    uint32_t prev_best = g_song_manager.getBestScore(song->id, current_diff_name);
-                    if (session.score > prev_best) {
-                        is_new_best = true;
-                        g_song_manager.setBestScore(song->id, current_diff_name, session.score);
+            } else {
+                double last_note_end = 0.0;
+                bool all_notes_finished = true;
+                if (!current_active_track.notes.empty()) {
+                    const auto& last = current_active_track.notes.back();
+                    last_note_end = last.time_seconds + last.duration_seconds;
+                    if (current_time < last_note_end + 1.2) {
+                        all_notes_finished = false;
                     }
                 }
-                state = STATE_RESULTS;
+
+                bool song_completed = false;
+                if (all_notes_finished) {
+                    if (audio.isLoaded()) {
+                        if (audio.isEnded()) {
+                            song_completed = true;
+                        } else if (audio.getTotalDurationSeconds() > 0.0 && current_time >= (audio.getTotalDurationSeconds() - 0.2)) {
+                            song_completed = true;
+                        } else if (current_chart_song.total_duration_seconds > 0.0 && current_time >= current_chart_song.total_duration_seconds) {
+                            song_completed = true;
+                        } else if (last_note_end > 0.0 && current_time >= last_note_end + 3.5) {
+                            if (audio.getTotalDurationSeconds() <= 0.0 || current_time >= audio.getTotalDurationSeconds()) {
+                                song_completed = true;
+                            }
+                        }
+                    } else {
+                        if (current_chart_song.total_duration_seconds > 0.0 && current_time >= current_chart_song.total_duration_seconds) {
+                            song_completed = true;
+                        } else if (last_note_end > 0.0 && current_time >= last_note_end + 2.5) {
+                            song_completed = true;
+                        }
+                    }
+                }
+
+                if (song_completed) {
+                    audio.pause();
+                    const SongItem* song = g_song_manager.getSong(current_song_idx);
+                    if (song) {
+                        uint32_t prev_best = g_song_manager.getBestScore(song->id, current_diff_name);
+                        if (session.score > prev_best) {
+                            is_new_best = true;
+                            g_song_manager.setBestScore(song->id, current_diff_name, session.score);
+                        }
+                    }
+                    state = STATE_RESULTS;
+                }
             }
 
             g_renderer.beginFrame();
