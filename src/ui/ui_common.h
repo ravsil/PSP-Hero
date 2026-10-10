@@ -19,3 +19,4 @@ enum AppState {
 void drawHeaderBar(const std::string& title, const std::string& subtitle = "");
 
 #endif // UI_COMMON_H
+

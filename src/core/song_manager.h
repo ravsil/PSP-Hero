@@ -72,3 +72,4 @@ private:
 extern SongManager g_song_manager;
 
 #endif // SONG_MANAGER_H
+

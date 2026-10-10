@@ -150,9 +150,10 @@ void HighwayRenderer::renderNotes(const ChartTrack& track, double current_time, 
         if (note.duration_seconds <= 0.05) continue;
 
         double d_start = (note.time_seconds - current_time) / travel_time;
-        double d_end = (note.time_seconds + note.duration_seconds - current_time) / travel_time;
+        if (d_start > 1.1) break; // Future notes cannot be visible
 
-        if (d_end < -0.1 || d_start > 1.05) continue;
+        double d_end = (note.time_seconds + note.duration_seconds - current_time) / travel_time;
+        if (d_end < -0.1) continue;
 
         float ds = std::max(0.0f, static_cast<float>(d_start));
         float de = std::min(1.0f, static_cast<float>(d_end));
@@ -191,7 +192,8 @@ void HighwayRenderer::renderNotes(const ChartTrack& track, double current_time, 
         if (note.hit) continue;
 
         double d = (note.time_seconds - current_time) / travel_time;
-        if (d < -0.2 || d > 1.02) continue;
+        if (d > 1.02) continue; // Future notes
+        if (d < -0.2) break;    // All remaining notes are in the past
 
         float s = getScale(static_cast<float>(d));
         float y = getY(s);
@@ -302,7 +304,7 @@ void HighwayRenderer::renderHUD(const ChartSong& song, const ChartTrack& track, 
     // 3. Score counter
     g_renderer.drawTextRight(110, 32, "Score", COLOR_GRAY, 1);
     char score_buf[32];
-    std::snprintf(score_buf, sizeof(score_buf), "%u", session.score);
+    std::snprintf(score_buf, sizeof(score_buf), "%lu", static_cast<unsigned long>(session.score));
     g_renderer.drawTextRight(110, 44, score_buf, COLOR_WHITE, 2);
 
     // 4. Circular Multiplier Orb on left (ox = 58, oy = 124, r = 26)
@@ -323,13 +325,13 @@ void HighwayRenderer::renderHUD(const ChartSong& song, const ChartTrack& track, 
     g_renderer.drawArc(ox, oy, oradius - 2, -1.5707963f, arc_end, mult_col, 3);
 
     char mult_buf[16];
-    std::snprintf(mult_buf, sizeof(mult_buf), "x%u", session.multiplier);
+    std::snprintf(mult_buf, sizeof(mult_buf), "x%lu", static_cast<unsigned long>(session.multiplier));
     g_renderer.drawTextCentered(ox, oy - 4, mult_buf, mult_col, 2);
 
     // 5. Streak counter
     g_renderer.drawTextCentered(ox, 162, "Streak", COLOR_GRAY, 1);
     char streak_buf[16];
-    std::snprintf(streak_buf, sizeof(streak_buf), "%u", session.streak);
+    std::snprintf(streak_buf, sizeof(streak_buf), "%lu", static_cast<unsigned long>(session.streak));
     g_renderer.drawTextCentered(ox, 174, streak_buf, COLOR_WHITE, 1);
 
     // 6. Accuracy percentage

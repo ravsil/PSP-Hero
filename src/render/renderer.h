@@ -121,3 +121,4 @@ private:
 extern Renderer g_renderer;
 
 #endif // RENDERER_H
+

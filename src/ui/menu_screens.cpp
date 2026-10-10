@@ -18,16 +18,14 @@ void drawHeaderBar(const std::string& title, const std::string& subtitle) {
 }
 
 void MenuScreens::loadSongCover(const SongItem& song) {
-    if (song.album_path == s_loaded_album_path && s_album_tex.is_valid) {
+    if (song.album_path == s_loaded_album_path) {
         return;
     }
     unloadSongCover();
+    s_loaded_album_path = song.album_path;
 
     if (!song.album_path.empty()) {
         s_album_tex = g_renderer.loadTexture(song.album_path, 36, 36);
-        if (s_album_tex.is_valid) {
-            s_loaded_album_path = song.album_path;
-        }
     }
 }
 

@@ -4,17 +4,17 @@
 #include <string>
 #include <cstdint>
 
-#define NATIVE_SAMPLE_RATE 44100
-#define OPUS_SAMPLE_RATE 48000
-#define AUDIO_BLOCK_SAMPLES 1024 // Frames per hardware block (1024 * 2 values)
-#define RING_BUFFER_FRAMES 32768 // 32768 stereo frames (~743 ms)
+#define AUDIO_SAMPLE_RATE_48K 48000
+#define AUDIO_SAMPLE_RATE_44K 44100
+#define AUDIO_BLOCK_SAMPLES   1024
+#define RING_BUFFER_FRAMES    16384 // ~341ms at 48kHz
 
 class AudioPlayer {
 public:
     AudioPlayer();
     ~AudioPlayer();
 
-    // Initialize audio system and load audio file (e.g. "song/guitar.opus")
+    // Initialize audio system and load audio file (e.g. "song/Aerials/guitar.opus")
     bool init(const std::string& filepath);
 
     // Audio playback controls
@@ -44,31 +44,34 @@ private:
     // Opus and PSP audio state
     void* m_opus_file; // OggOpusFile*
     int m_audio_channel;
+    bool m_use_src_channel; // True if using hardware 48kHz SRC channel
+    int m_sample_rate;
     int m_thread_id;
-    int64_t m_current_samples; // in 44.1kHz frames
-    int64_t m_total_samples;   // in 48kHz frames
+    int64_t m_current_samples;
+    int64_t m_total_samples;
     double m_total_duration;
 
-    // Ring buffer (holds 44.1kHz stereo audio frames)
+    // Ring buffer (holds stereo frames)
     int16_t* m_ring_buffer; // size: RING_BUFFER_FRAMES * 2
     int m_ring_write_head;
     int m_ring_read_tail;
     volatile int m_ring_count;
 
-    // Resampler scratch buffer (holds 48kHz decoded audio from Opus)
+    // Resampler scratch buffer (only used if 44.1kHz fallback is active)
     int16_t m_decode_buf_48k[2048 * 2];
     int m_decode_avail_48k;
     double m_resample_src_pos;
 
-    // Fallback clock (when audio file is missing or failed to open)
-    uint64_t m_fallback_start_tick;
-    uint64_t m_fallback_paused_tick;
-    double m_fallback_time_offset;
+    // Hardware sync clock for sub-block smooth interpolation
+    uint64_t m_last_block_tick;
+    uint64_t m_playback_start_tick;
+    uint64_t m_paused_tick;
+    double m_clock_offset;
     bool m_use_fallback_clock;
 
     static int audioThreadFunc(unsigned int args, void* argp);
     void runAudioLoop();
-    void fillRingBuffer();
+    void decodeChunk();
 };
 
 #endif // AUDIO_PLAYER_H

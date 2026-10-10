@@ -346,15 +346,10 @@ int main(int argc, char* argv[]) {
 
             if (is_listening_button) {
                 if (buttons_down != 0) {
-                    if (buttons_down & PSP_CTRL_CIRCLE && buttons_down == PSP_CTRL_CIRCLE) {
-                        // Cancel
-                        is_listening_button = false;
-                    } else {
-                        // Assign the pressed button mask
-                        g_config.buttons[remapper_idx] = buttons_down;
-                        g_config.save();
-                        is_listening_button = false;
-                    }
+                    // Assign the pressed button mask (works for any button including Circle)
+                    g_config.buttons[remapper_idx] = buttons_down;
+                    g_config.save();
+                    is_listening_button = false;
                 }
             } else {
                 if (buttons_down & PSP_CTRL_UP) {
@@ -412,6 +407,7 @@ int main(int argc, char* argv[]) {
             if (g_config.autoplay) {
                 // Autoplay mode
                 for (auto& n : current_active_track.notes) {
+                    if (n.time_seconds > current_time + 0.1) break; // Future notes
                     if (!n.hit && !n.missed && n.time_seconds <= current_time) {
                         n.hit = true;
                         held_frets_mask |= (1u << n.lane);
@@ -444,7 +440,7 @@ int main(int argc, char* argv[]) {
                     for (auto& n : current_active_track.notes) {
                         if (n.hit || n.missed) continue;
                         double diff = n.time_seconds - current_time;
-                        if (diff > HIT_WINDOW) break;
+                        if (diff > HIT_WINDOW) break; // Notes are too far in the future
 
                         if (std::abs(diff) <= HIT_WINDOW) {
                             if (n.lane == LANE_OPEN || (held_frets_mask & (1u << n.lane))) {
@@ -465,6 +461,7 @@ int main(int argc, char* argv[]) {
 
                 // Check for missed notes
                 for (auto& n : current_active_track.notes) {
+                    if (n.time_seconds > current_time) break; // Future notes cannot be missed yet
                     if (!n.hit && !n.missed && (current_time - n.time_seconds) > HIT_WINDOW) {
                         n.missed = true;
                         session.onMiss();
@@ -524,7 +521,7 @@ int main(int argc, char* argv[]) {
                     state = STATE_GAMEPLAY;
                 } else if (pause_idx == 2) {
                     // Quit to Songs (YES: Pause menu has Quit button!)
-                    audio.init("");
+                    audio.shutdown();
                     state = STATE_SONG_SELECT;
                 }
             }
@@ -555,7 +552,7 @@ int main(int argc, char* argv[]) {
             }
             if (buttons_down & PSP_CTRL_CIRCLE) {
                 // Back to Songs
-                audio.init("");
+                audio.shutdown();
                 state = STATE_SONG_SELECT;
             }
 
@@ -567,6 +564,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    audio.shutdown();
     g_renderer.shutdown();
 
 #ifdef __PSP__
