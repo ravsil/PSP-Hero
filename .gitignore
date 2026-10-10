@@ -1,8 +1,20 @@
-songs
-song
+# PSP build artifacts and executables
 *.o
 *.elf
 *.prx
+*.pbp
 PARAM.SFO
-test_parser
 EBOOT.PBP
+test_parser
+
+# User song directories (never distribute copyrighted tracks or charts)
+songs/*
+!songs/.gitkeep
+song/*
+!song/.gitkeep
+
+# System & editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.bak

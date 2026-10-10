@@ -1,0 +1,6 @@
+# Place your Clone Hero / Guitar Hero song folders here.
+# Each song folder should contain:
+#   - notes.chart (or chart.chart)
+#   - song.opus, song.ogg, song.mp3, guitar.opus, or guitar.ogg
+#   - album.png or album.jpg (optional 36x36 to 512x512 album artwork)
+#   - song.ini (optional metadata)
