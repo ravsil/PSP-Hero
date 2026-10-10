@@ -111,7 +111,7 @@ void HighwayRenderer::renderHighwayBase(double current_time, double travel_time,
     float hw_bot = getHighwayHalfWidth(SB);
 
     // Highway bed
-    unsigned int bed_col = COLOR_RGBA(9, 8, 16, 215);
+    unsigned int bed_col = COLOR_RGBA(9, 8, 16, 255);
     g_renderer.drawQuad(static_cast<int>(CX - hw_top), static_cast<int>(YT),
                         static_cast<int>(CX + hw_top), static_cast<int>(YT),
                         static_cast<int>(CX + hw_bot), static_cast<int>(SCR_H),
@@ -427,8 +427,8 @@ void HighwayRenderer::render(const ChartSong& song,
                              bool is_paused) {
     (void)is_paused;
 
-    // 1. Reactive Background (keep normal background, do NOT turn all blue)
-    g_renderer.renderBackground(false);
+    // 1. Reactive Background (aligned with highway lanes in-game)
+    g_renderer.renderBackground(session.star_active, true);
 
     // 2. Highway Base & Rails
     renderHighwayBase(current_time, travel_time, held_frets_mask, session.star_active);

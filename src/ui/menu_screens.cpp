@@ -471,20 +471,25 @@ void MenuScreens::renderCountdown(float countdown_timer) {
     if (frac <= 0.001f) frac = 1.0f;
 
     // Stylish glassmorphic badge in the center of the screen
-    int bw = 110, bh = 80;
+    int bw = 96, bh = 84;
     int bx = 240 - bw / 2;
-    int by = 136 - bh / 2 - 8;
-    g_renderer.drawRoundedRect(bx, by, bw, bh, 8, COLOR_RGBA(12, 10, 24, 225), COLOR_RGBA(255, 210, 63, 190));
+    int by = 136 - bh / 2 - 4;
+    g_renderer.drawRoundedRect(bx, by, bw, bh, 8, COLOR_RGBA(12, 10, 24, 230), COLOR_RGBA(255, 210, 63, 190));
 
-    // Progress arc
-    g_renderer.drawArc(240, 136 - 8, 46, 0.0f, 6.283f * frac, COLOR_RGBA(255, 210, 63, 160), 2);
+    // Centered countdown ring around the number
+    int ring_cy = by + 30;
+    int ring_r = 21;
+    // Dim background track
+    g_renderer.drawCircle(240, ring_cy, ring_r, COLOR_RGBA(255, 210, 63, 40), false);
+    // Active progress arc sweeping clockwise from top (-PI/2)
+    g_renderer.drawArc(240, ring_cy, ring_r, -1.5707963f, -1.5707963f + 6.2831853f * frac, COLOR_GOLD, 2);
 
-    // Number text (Scale 3)
+    // Number text (Scale 3) centered inside ring
     std::string num_str = std::to_string(num);
-    g_renderer.drawTextCentered(240, by + 18, num_str, COLOR_GOLD, 3);
+    g_renderer.drawTextCentered(240, ring_cy - 11, num_str, COLOR_WHITE, 3);
 
     // Subtitle
-    g_renderer.drawTextCentered(240, by + bh - 16, "GET READY", COLOR_RGBA(220, 215, 240, 255), 1);
+    g_renderer.drawTextCentered(240, by + bh - 18, "GET READY", COLOR_RGBA(220, 215, 240, 255), 1);
 }
 
 void MenuScreens::renderResults(const SongItem& song, const std::string& diff_name, const GameSession& session, bool is_new_best) {

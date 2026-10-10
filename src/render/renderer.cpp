@@ -503,7 +503,7 @@ void Renderer::triggerBackgroundHit(int lane, float strength) {
     }
 }
 
-void Renderer::renderBackground(bool star_power) {
+void Renderer::renderBackground(bool star_power, bool in_game) {
     (void)star_power;
     // 1. Base dark background
     drawRect(0, 0, SCR_WIDTH, SCR_HEIGHT, COLOR_PAGE);
@@ -531,14 +531,29 @@ void Renderer::renderBackground(bool star_power) {
         drawRect(bx, by, 10, 2, COLOR_RGBA(255, 255, 255, 120));
     }
 
-    // 4. Five-segment rotating glowing ring behind center
+    // 4. Five-segment glowing outline
     float cx = 240.0f, cy = 118.0f;
     float r = 78.0f + m_pulse * 8.0f;
-    for (int i = 0; i < 5; ++i) {
-        float a0 = m_ring_rot + i * (6.2831853f / 5.0f);
-        float a1 = a0 + (6.2831853f / 5.0f) * 0.76f;
-        unsigned int col = getLaneColor(i);
-        drawArc(static_cast<int>(cx), static_cast<int>(cy), static_cast<int>(r), a0, a1, col, 2);
+
+    if (in_game) {
+        // Aligned symmetrically with the 5 lanes of the 3D note highway
+        // Upper arch spanning from Green (left) across Red, Yellow (top center), Blue, to Orange (right)
+        // Perfectly matches lane ordering and leaves bottom open for highway receptors
+        float seg_span = 3.14159265f / 5.0f;
+        for (int i = 0; i < 5; ++i) {
+            float a0 = -3.14159265f + i * seg_span + seg_span * 0.08f;
+            float a1 = a0 + seg_span * 0.84f;
+            unsigned int col = getLaneColor(i);
+            drawArc(static_cast<int>(cx), static_cast<int>(cy), static_cast<int>(r), a0, a1, col, 2);
+        }
+    } else {
+        // Ambient spinning ring for menus
+        for (int i = 0; i < 5; ++i) {
+            float a0 = m_ring_rot + i * (6.2831853f / 5.0f);
+            float a1 = a0 + (6.2831853f / 5.0f) * 0.76f;
+            unsigned int col = getLaneColor(i);
+            drawArc(static_cast<int>(cx), static_cast<int>(cy), static_cast<int>(r), a0, a1, col, 2);
+        }
     }
 }
 

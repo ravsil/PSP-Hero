@@ -86,7 +86,7 @@ public:
     // Dynamic Reactive Background
     void updateBackground(float dt, float bpm = 120.0f, bool star_power = false);
     void triggerBackgroundHit(int lane, float strength = 1.0f);
-    void renderBackground(bool star_power = false);
+    void renderBackground(bool star_power = false, bool in_game = false);
 
     // Logo
     void drawLogo(int cx, int cy, int scale = 2);

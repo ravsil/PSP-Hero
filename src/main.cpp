@@ -125,6 +125,7 @@ int main(int argc, char* argv[]) {
     int pause_idx = 0;
     float countdown_timer = 0.0f;
     int last_countdown_num = 3;
+    double last_miss_sfx_time = -1.0;
 
     // Initialize sound effects synthesizer and audio thread
     SoundEffects::init();
@@ -343,6 +344,7 @@ int main(int argc, char* argv[]) {
                         audio.play();
 
                         session.reset();
+                        last_miss_sfx_time = -1.0;
                         is_new_best = false;
                         state = STATE_GAMEPLAY;
                     }
@@ -546,12 +548,12 @@ int main(int argc, char* argv[]) {
                 }
             } else {
                 // Manual Play
-                bool strum_hit = !g_config.strum_required;
+                bool strum_hit = false;
                 if (buttons_down & (g_config.buttons[ACTION_STRUM_UP] | g_config.buttons[ACTION_STRUM_DOWN])) {
                     strum_hit = true;
                 }
 
-                // Fret press detection for tap mode
+                // Fret press detection for tap mode (requires fresh press, not holding)
                 uint32_t frets_pressed_now = 0;
                 for (int lane = 0; lane < 5; ++lane) {
                     if (buttons_down & g_config.buttons[ACTION_FRET_GREEN + lane]) {
@@ -559,19 +561,31 @@ int main(int argc, char* argv[]) {
                     }
                 }
 
-                if (!g_config.strum_required && frets_pressed_now != 0) {
-                    strum_hit = true;
-                }
+                uint32_t lanes_hit_this_frame = 0;
+                bool note_hit_this_strum = false;
 
-                if (strum_hit) {
-                    bool note_hit_this_strum = false;
-                    for (auto& n : current_active_track.notes) {
-                        if (n.hit || n.missed) continue;
-                        double diff = n.time_seconds - current_time;
-                        if (diff > HIT_WINDOW) break; // Notes are too far in the future
+                for (auto& n : current_active_track.notes) {
+                    if (n.hit || n.missed) continue;
+                    double diff = n.time_seconds - current_time;
+                    if (diff > HIT_WINDOW) break; // Notes are too far in the future
 
-                        if (std::abs(diff) <= HIT_WINDOW) {
-                            if (n.lane == LANE_OPEN || (held_frets_mask & (1u << n.lane))) {
+                    if (std::abs(diff) <= HIT_WINDOW) {
+                        int lane_idx = (n.lane == LANE_OPEN) ? 5 : n.lane;
+                        if (lane_idx >= 0 && lane_idx <= 5 && !(lanes_hit_this_frame & (1u << lane_idx))) {
+                            bool can_hit = false;
+                            if (g_config.strum_required) {
+                                can_hit = strum_hit && (n.lane == LANE_OPEN || (held_frets_mask & (1u << n.lane)));
+                            } else {
+                                if (n.lane == LANE_OPEN) {
+                                    can_hit = strum_hit || (buttons_down & (g_config.buttons[ACTION_STRUM_UP] | g_config.buttons[ACTION_STRUM_DOWN]));
+                                } else {
+                                    // Requires fret just pressed on this frame (prevents holding buttons from auto-striking!)
+                                    can_hit = (frets_pressed_now & (1u << n.lane)) != 0;
+                                }
+                            }
+
+                            if (can_hit) {
+                                lanes_hit_this_frame |= (1u << lane_idx);
                                 n.hit = true;
                                 note_hit_this_strum = true;
                                 float prev_star = session.star;
@@ -586,52 +600,59 @@ int main(int argc, char* argv[]) {
                                     n.sustain_dropped = false;
                                     n.sustain_scored_time = n.time_seconds;
                                 }
-                                break;
                             }
                         }
                     }
+                }
 
-                    if (!note_hit_this_strum && g_config.strum_required) {
-                        session.onOverstrum();
+                if (strum_hit && !note_hit_this_strum && g_config.strum_required) {
+                    bool lost_streak = (session.streak > 0);
+                    session.onOverstrum();
+                    if (lost_streak || (current_time - last_miss_sfx_time > 0.20)) {
                         SoundEffects::play(SFX_MISS);
+                        last_miss_sfx_time = current_time;
                     }
                 }
+            }
 
-                // Sustain processing for manual play
-                for (auto& n : current_active_track.notes) {
-                    if (n.time_seconds > current_time + 0.1) break;
-                    if (n.sustaining) {
-                        double note_end = n.time_seconds + n.duration_seconds;
-                        bool is_fret_held = (n.lane == LANE_OPEN) || ((held_frets_mask & (1u << n.lane)) != 0);
+            // Sustain processing for manual play
+            for (auto& n : current_active_track.notes) {
+                if (n.time_seconds > current_time + 0.1) break;
+                if (n.sustaining) {
+                    double note_end = n.time_seconds + n.duration_seconds;
+                    bool is_fret_held = (n.lane == LANE_OPEN) || ((held_frets_mask & (1u << n.lane)) != 0);
 
-                        if (is_fret_held && current_time <= note_end) {
-                            double dt_held = std::min(current_time, note_end) - n.sustain_scored_time;
-                            if (dt_held > 0.0) {
-                                session.addSustainScore(dt_held);
-                                session.rock = std::min(1.0f, session.rock + static_cast<float>(dt_held * 0.02f));
-                                n.sustain_scored_time = std::min(current_time, note_end);
-                            }
-                            highway.triggerSustainFX(n.lane, session.star_active);
-                        } else if (!is_fret_held && current_time < note_end) {
-                            // Player let go early
-                            n.sustaining = false;
-                            n.sustain_dropped = true;
-                        } else {
-                            // Reached end naturally
-                            n.sustaining = false;
+                    if (is_fret_held && current_time <= note_end) {
+                        double dt_held = std::min(current_time, note_end) - n.sustain_scored_time;
+                        if (dt_held > 0.0) {
+                            session.addSustainScore(dt_held);
+                            session.rock = std::min(1.0f, session.rock + static_cast<float>(dt_held * 0.02f));
+                            n.sustain_scored_time = std::min(current_time, note_end);
                         }
-                    }
-                }
-
-                // Check for missed notes
-                for (auto& n : current_active_track.notes) {
-                    if (n.time_seconds > current_time) break; // Future notes cannot be missed yet
-                    if (!n.hit && !n.missed && (current_time - n.time_seconds) > HIT_WINDOW) {
-                        n.missed = true;
+                        highway.triggerSustainFX(n.lane, session.star_active);
+                    } else if (!is_fret_held && current_time < note_end) {
+                        // Player let go early
                         n.sustaining = false;
                         n.sustain_dropped = true;
-                        session.onMiss();
+                    } else {
+                        // Reached end naturally
+                        n.sustaining = false;
+                    }
+                }
+            }
+
+            // Check for missed notes
+            for (auto& n : current_active_track.notes) {
+                if (n.time_seconds > current_time) break; // Future notes cannot be missed yet
+                if (!n.hit && !n.missed && (current_time - n.time_seconds) > HIT_WINDOW) {
+                    n.missed = true;
+                    n.sustaining = false;
+                    n.sustain_dropped = true;
+                    bool lost_streak = (session.streak > 0);
+                    session.onMiss();
+                    if (lost_streak || (current_time - last_miss_sfx_time > 0.25)) {
                         SoundEffects::play(SFX_MISS);
+                        last_miss_sfx_time = current_time;
                     }
                 }
             }
@@ -729,6 +750,7 @@ int main(int argc, char* argv[]) {
                         n.sustain_scored_time = 0.0;
                     }
                     session.reset();
+                    last_miss_sfx_time = -1.0;
                     audio.play();
                     state = STATE_GAMEPLAY;
                 } else if (pause_idx == 2) {
@@ -799,6 +821,7 @@ int main(int argc, char* argv[]) {
                     audio.seek(0.0);
                     audio.play();
                     session.reset();
+                    last_miss_sfx_time = -1.0;
                     is_new_best = false;
                     state = STATE_GAMEPLAY;
                 }
