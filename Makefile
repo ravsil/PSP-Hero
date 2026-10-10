@@ -4,6 +4,7 @@ OBJS = src/main.o \
        src/core/audio_player.o \
        src/core/song_manager.o \
        src/core/config.o \
+       src/core/sound_effects.o \
        src/core/stb_vorbis.o \
        src/render/renderer.o \
        src/game/highway_renderer.o \

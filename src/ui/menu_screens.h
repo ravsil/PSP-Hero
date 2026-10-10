@@ -30,6 +30,9 @@ public:
     // In-game Pause Overlay (Resume, Restart, Quit to Songs)
     static void renderPause(int selected_index);
 
+    // Resume Countdown Overlay (3... 2... 1...)
+    static void renderCountdown(float countdown_timer);
+
     // Results Screen (Song Complete/Failed, Stars, Score, Accuracy)
     static void renderResults(const SongItem& song, const std::string& diff_name, const GameSession& session, bool is_new_best);
 

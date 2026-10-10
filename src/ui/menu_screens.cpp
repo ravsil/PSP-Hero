@@ -457,6 +457,36 @@ void MenuScreens::renderPause(int selected_index) {
     hx += g_renderer.drawButtonHint(hx + 8, 252, ICON_DPAD, "Move");
 }
 
+void MenuScreens::renderCountdown(float countdown_timer) {
+    // Subtle backdrop dim so the countdown pops over the highway
+    g_renderer.drawRect(0, 0, 480, 272, COLOR_RGBA(0, 0, 0, 110));
+
+    // Determine current number (3, 2, or 1)
+    int num = static_cast<int>(std::ceil(countdown_timer));
+    if (num < 1) num = 1;
+    if (num > 3) num = 3;
+
+    // Fractional progress in current second (1.0 down to 0.0)
+    float frac = countdown_timer - std::floor(countdown_timer);
+    if (frac <= 0.001f) frac = 1.0f;
+
+    // Stylish glassmorphic badge in the center of the screen
+    int bw = 110, bh = 80;
+    int bx = 240 - bw / 2;
+    int by = 136 - bh / 2 - 8;
+    g_renderer.drawRoundedRect(bx, by, bw, bh, 8, COLOR_RGBA(12, 10, 24, 225), COLOR_RGBA(255, 210, 63, 190));
+
+    // Progress arc
+    g_renderer.drawArc(240, 136 - 8, 46, 0.0f, 6.283f * frac, COLOR_RGBA(255, 210, 63, 160), 2);
+
+    // Number text (Scale 3)
+    std::string num_str = std::to_string(num);
+    g_renderer.drawTextCentered(240, by + 18, num_str, COLOR_GOLD, 3);
+
+    // Subtitle
+    g_renderer.drawTextCentered(240, by + bh - 16, "GET READY", COLOR_RGBA(220, 215, 240, 255), 1);
+}
+
 void MenuScreens::renderResults(const SongItem& song, const std::string& diff_name, const GameSession& session, bool is_new_best) {
     g_renderer.renderBackground(false);
 

@@ -13,6 +13,7 @@ enum AppState {
     STATE_REMAPPER,
     STATE_GAMEPLAY,
     STATE_PAUSE,
+    STATE_COUNTDOWN,
     STATE_RESULTS
 };
 

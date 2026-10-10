@@ -6,6 +6,7 @@
 #include "highway_renderer.h"
 #include "gameplay.h"
 #include "menu_screens.h"
+#include "sound_effects.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -122,6 +123,11 @@ int main(int argc, char* argv[]) {
     int remapper_idx = 0;
     bool is_listening_button = false;
     int pause_idx = 0;
+    float countdown_timer = 0.0f;
+    int last_countdown_num = 3;
+
+    // Initialize sound effects synthesizer and audio thread
+    SoundEffects::init();
 
     double last_time = getRealTimeSeconds();
 
@@ -156,6 +162,7 @@ int main(int argc, char* argv[]) {
 
         if (state == STATE_TITLE) {
             if (buttons_down & (PSP_CTRL_START | PSP_CTRL_CROSS)) {
+                SoundEffects::play(SFX_SELECT);
                 state = STATE_MAIN_MENU;
                 menu_idx = 0;
             }
@@ -168,13 +175,16 @@ int main(int argc, char* argv[]) {
             // Navigation
             if (buttons_down & PSP_CTRL_UP) {
                 menu_idx = (menu_idx - 1 + 3) % 3;
+                SoundEffects::play(SFX_TICK);
             }
             if (buttons_down & PSP_CTRL_DOWN) {
                 menu_idx = (menu_idx + 1) % 3;
+                SoundEffects::play(SFX_TICK);
             }
 
             // Confirm selection
             if (buttons_down & PSP_CTRL_CROSS) {
+                SoundEffects::play(SFX_SELECT);
                 if (menu_idx == 0) {
                     // Quick Play: Pick a random song every time
                     size_t count = g_song_manager.getSongCount();
@@ -213,6 +223,7 @@ int main(int argc, char* argv[]) {
                     } else {
                         current_song_idx--;
                     }
+                    SoundEffects::play(SFX_TICK);
                 }
                 if (buttons_down & PSP_CTRL_DOWN) {
                     if (current_song_idx + 1 >= count) {
@@ -220,6 +231,7 @@ int main(int argc, char* argv[]) {
                     } else {
                         current_song_idx++;
                     }
+                    SoundEffects::play(SFX_TICK);
                 }
                 if (buttons_down & PSP_CTRL_LEFT) {
                     // Page Up (by 4 items)
@@ -230,6 +242,7 @@ int main(int argc, char* argv[]) {
                     } else {
                         current_song_idx = (count > 4) ? (count - 1) : 0;
                     }
+                    SoundEffects::play(SFX_TICK);
                 }
                 if (buttons_down & PSP_CTRL_RIGHT) {
                     // Page Down (by 4 items)
@@ -240,6 +253,7 @@ int main(int argc, char* argv[]) {
                     } else {
                         current_song_idx = 0;
                     }
+                    SoundEffects::play(SFX_TICK);
                 }
 
                 // Keep scroll window aligned with current_song_idx
@@ -256,11 +270,13 @@ int main(int argc, char* argv[]) {
             }
 
             if (buttons_down & PSP_CTRL_CROSS && count > 0) {
+                SoundEffects::play(SFX_SELECT);
                 selected_diff_idx = 0;
                 state = STATE_DIFFICULTY_SELECT;
             }
 
             if (buttons_down & PSP_CTRL_CIRCLE) {
+                SoundEffects::play(SFX_BACK);
                 state = STATE_MAIN_MENU;
             }
 
@@ -282,17 +298,21 @@ int main(int argc, char* argv[]) {
             if (diff_count > 0) {
                 if (buttons_down & PSP_CTRL_UP) {
                     selected_diff_idx = (selected_diff_idx - 1 + diff_count) % diff_count;
+                    SoundEffects::play(SFX_TICK);
                 }
                 if (buttons_down & PSP_CTRL_DOWN) {
                     selected_diff_idx = (selected_diff_idx + 1) % diff_count;
+                    SoundEffects::play(SFX_TICK);
                 }
             }
 
             if (buttons_down & PSP_CTRL_CIRCLE) {
+                SoundEffects::play(SFX_BACK);
                 state = STATE_SONG_SELECT;
             }
 
             if (buttons_down & PSP_CTRL_CROSS && song && diff_count > 0) {
+                SoundEffects::play(SFX_SELECT);
                 std::string chosen_diff = diffs[selected_diff_idx];
 
                 // Load chart file
@@ -338,9 +358,11 @@ int main(int argc, char* argv[]) {
         else if (state == STATE_OPTIONS) {
             if (buttons_down & PSP_CTRL_UP) {
                 options_idx = (options_idx - 1 + 6) % 6;
+                SoundEffects::play(SFX_TICK);
             }
             if (buttons_down & PSP_CTRL_DOWN) {
                 options_idx = (options_idx + 1) % 6;
+                SoundEffects::play(SFX_TICK);
             }
 
             // Adjust values Left/Right
@@ -349,6 +371,7 @@ int main(int argc, char* argv[]) {
             if (buttons_down & PSP_CTRL_RIGHT) dir = 1;
 
             if (dir != 0) {
+                SoundEffects::play(SFX_OPT);
                 switch (options_idx) {
                     case 1:
                         g_config.note_speed = std::clamp(g_config.note_speed + dir, 1, 5);
@@ -371,25 +394,31 @@ int main(int argc, char* argv[]) {
 
             if (buttons_down & PSP_CTRL_CROSS) {
                 if (options_idx == 0) {
+                    SoundEffects::play(SFX_SELECT);
                     state = STATE_REMAPPER;
                     remapper_idx = 0;
                     is_listening_button = false;
                 } else if (options_idx == 1) {
+                    SoundEffects::play(SFX_OPT);
                     g_config.note_speed = (g_config.note_speed % 5) + 1;
                     g_config.save();
                 } else if (options_idx == 2) {
+                    SoundEffects::play(SFX_OPT);
                     g_config.strum_required = !g_config.strum_required;
                     g_config.save();
                 } else if (options_idx == 3) {
+                    SoundEffects::play(SFX_OPT);
                     g_config.autoplay = !g_config.autoplay;
                     g_config.save();
                 } else if (options_idx == 5) {
+                    SoundEffects::play(SFX_OPT);
                     g_config.background_fx = !g_config.background_fx;
                     g_config.save();
                 }
             }
 
             if (buttons_down & PSP_CTRL_CIRCLE) {
+                SoundEffects::play(SFX_BACK);
                 g_config.save();
                 state = STATE_MAIN_MENU;
             }
@@ -404,6 +433,7 @@ int main(int argc, char* argv[]) {
             if (is_listening_button) {
                 if (buttons_down != 0) {
                     // Assign the pressed button mask (works for any button including Circle)
+                    SoundEffects::play(SFX_OPT);
                     g_config.buttons[remapper_idx] = buttons_down;
                     g_config.save();
                     is_listening_button = false;
@@ -411,12 +441,15 @@ int main(int argc, char* argv[]) {
             } else {
                 if (buttons_down & PSP_CTRL_UP) {
                     remapper_idx = (remapper_idx - 1 + total_rows) % total_rows;
+                    SoundEffects::play(SFX_TICK);
                 }
                 if (buttons_down & PSP_CTRL_DOWN) {
                     remapper_idx = (remapper_idx + 1) % total_rows;
+                    SoundEffects::play(SFX_TICK);
                 }
 
                 if (buttons_down & PSP_CTRL_CROSS) {
+                    SoundEffects::play(SFX_SELECT);
                     if (remapper_idx == ACTION_COUNT) {
                         g_config.resetToDefaults();
                         g_config.save();
@@ -426,6 +459,7 @@ int main(int argc, char* argv[]) {
                 }
 
                 if (buttons_down & PSP_CTRL_CIRCLE) {
+                    SoundEffects::play(SFX_BACK);
                     g_config.save();
                     state = STATE_OPTIONS;
                 }
@@ -442,14 +476,18 @@ int main(int argc, char* argv[]) {
 
             // Check pause
             if (buttons_down & g_config.buttons[ACTION_PAUSE]) {
-                audio.togglePause();
+                audio.pause();
+                SoundEffects::play(SFX_SELECT);
                 state = STATE_PAUSE;
                 pause_idx = 0;
             }
 
             // Star power activation
             if (buttons_down & g_config.buttons[ACTION_STAR_POWER]) {
-                session.activateStarPower();
+                if (session.star >= 0.5f && !session.star_active) {
+                    session.activateStarPower();
+                    SoundEffects::play(SFX_STAR_ON);
+                }
             }
 
             // Read held frets according to button bindings
@@ -470,7 +508,11 @@ int main(int argc, char* argv[]) {
                         if (n.lane >= 0 && n.lane < 5) {
                             held_frets_mask |= (1u << n.lane);
                         }
+                        float prev_star = session.star;
                         session.onHit(n.lane, 0.0, 1);
+                        if (!session.star_active && prev_star < 0.5f && session.star >= 0.5f) {
+                            SoundEffects::play(SFX_STAR_READY);
+                        }
                         highway.triggerHitFX(n.lane, session.streak);
                         g_renderer.triggerBackgroundHit(n.lane, 1.0f);
                         if (n.duration_seconds > 0.05) {
@@ -532,7 +574,11 @@ int main(int argc, char* argv[]) {
                             if (n.lane == LANE_OPEN || (held_frets_mask & (1u << n.lane))) {
                                 n.hit = true;
                                 note_hit_this_strum = true;
+                                float prev_star = session.star;
                                 session.onHit(n.lane, diff, 1);
+                                if (!session.star_active && prev_star < 0.5f && session.star >= 0.5f) {
+                                    SoundEffects::play(SFX_STAR_READY);
+                                }
                                 highway.triggerHitFX(n.lane, session.streak);
                                 g_renderer.triggerBackgroundHit(n.lane, 1.0f);
                                 if (n.duration_seconds > 0.05) {
@@ -547,6 +593,7 @@ int main(int argc, char* argv[]) {
 
                     if (!note_hit_this_strum && g_config.strum_required) {
                         session.onOverstrum();
+                        SoundEffects::play(SFX_MISS);
                     }
                 }
 
@@ -584,6 +631,7 @@ int main(int argc, char* argv[]) {
                         n.sustaining = false;
                         n.sustain_dropped = true;
                         session.onMiss();
+                        SoundEffects::play(SFX_MISS);
                     }
                 }
             }
@@ -648,23 +696,30 @@ int main(int argc, char* argv[]) {
         else if (state == STATE_PAUSE) {
             if (buttons_down & PSP_CTRL_UP) {
                 pause_idx = (pause_idx - 1 + 3) % 3;
+                SoundEffects::play(SFX_TICK);
             }
             if (buttons_down & PSP_CTRL_DOWN) {
                 pause_idx = (pause_idx + 1) % 3;
+                SoundEffects::play(SFX_TICK);
             }
 
             if (buttons_down & (PSP_CTRL_START | PSP_CTRL_CIRCLE)) {
-                audio.togglePause();
-                state = STATE_GAMEPLAY;
+                state = STATE_COUNTDOWN;
+                countdown_timer = 3.0f;
+                last_countdown_num = 3;
+                SoundEffects::play(SFX_TICK);
             }
 
             if (buttons_down & PSP_CTRL_CROSS) {
                 if (pause_idx == 0) {
-                    // Resume
-                    audio.togglePause();
-                    state = STATE_GAMEPLAY;
+                    // Resume -> 3 2 1 Countdown
+                    state = STATE_COUNTDOWN;
+                    countdown_timer = 3.0f;
+                    last_countdown_num = 3;
+                    SoundEffects::play(SFX_TICK);
                 } else if (pause_idx == 1) {
                     // Restart
+                    SoundEffects::play(SFX_SELECT);
                     audio.seek(0.0);
                     for (auto& n : current_active_track.notes) {
                         n.hit = false;
@@ -678,6 +733,7 @@ int main(int argc, char* argv[]) {
                     state = STATE_GAMEPLAY;
                 } else if (pause_idx == 2) {
                     // Quit to Songs (YES: Pause menu has Quit button!)
+                    SoundEffects::play(SFX_BACK);
                     audio.shutdown();
                     state = STATE_SONG_SELECT;
                 }
@@ -690,11 +746,48 @@ int main(int argc, char* argv[]) {
             MenuScreens::renderPause(pause_idx);
             g_renderer.endFrame();
         }
+        else if (state == STATE_COUNTDOWN) {
+            // Read held frets so player can prepare hand/fret positioning
+            uint32_t held_frets_mask = 0;
+            for (int lane = 0; lane < 5; ++lane) {
+                if (buttons_held & g_config.buttons[ACTION_FRET_GREEN + lane]) {
+                    held_frets_mask |= (1u << lane);
+                }
+            }
+
+            // Can pause again if needed
+            if (buttons_down & g_config.buttons[ACTION_PAUSE]) {
+                state = STATE_PAUSE;
+                pause_idx = 0;
+                SoundEffects::play(SFX_SELECT);
+            }
+
+            countdown_timer -= dt;
+            int cur_num = static_cast<int>(std::ceil(countdown_timer));
+            if (cur_num < last_countdown_num && cur_num >= 1) {
+                last_countdown_num = cur_num;
+                SoundEffects::play(SFX_TICK);
+            }
+
+            if (countdown_timer <= 0.0f) {
+                SoundEffects::play(SFX_SELECT);
+                audio.play();
+                state = STATE_GAMEPLAY;
+            }
+
+            g_renderer.beginFrame();
+            double cur_time = audio.getTimeSeconds();
+            highway.render(current_chart_song, current_active_track, cur_time,
+                           g_config.getTravelTime(), session, held_frets_mask, false);
+            MenuScreens::renderCountdown(countdown_timer);
+            g_renderer.endFrame();
+        }
         else if (state == STATE_RESULTS) {
             const SongItem* song = g_song_manager.getSong(current_song_idx);
 
             if (buttons_down & PSP_CTRL_CROSS) {
                 // Retry
+                SoundEffects::play(SFX_SELECT);
                 if (song) {
                     for (auto& n : current_active_track.notes) {
                         n.hit = false;
@@ -712,6 +805,7 @@ int main(int argc, char* argv[]) {
             }
             if (buttons_down & PSP_CTRL_CIRCLE) {
                 // Back to Songs
+                SoundEffects::play(SFX_BACK);
                 audio.shutdown();
                 state = STATE_SONG_SELECT;
             }
@@ -724,6 +818,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    SoundEffects::shutdown();
     audio.shutdown();
     g_renderer.shutdown();
 
