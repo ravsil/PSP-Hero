@@ -6,6 +6,12 @@
 Texture MenuScreens::s_album_tex = { 0, 0, 0, nullptr, false };
 std::string MenuScreens::s_loaded_album_path = "";
 
+std::string truncateText(const std::string& str, size_t max_len) {
+    if (str.length() <= max_len) return str;
+    if (max_len <= 3) return str.substr(0, max_len);
+    return str.substr(0, max_len - 3) + "...";
+}
+
 void drawHeaderBar(const std::string& title, const std::string& subtitle) {
     // Back arrow chevron ‹
     g_renderer.drawLine(24, 22, 17, 28, COLOR_GRAY);
@@ -13,7 +19,7 @@ void drawHeaderBar(const std::string& title, const std::string& subtitle) {
 
     g_renderer.drawText(34, 18, title, COLOR_WHITE, 2);
     if (!subtitle.empty()) {
-        g_renderer.drawText(34, 36, subtitle, COLOR_GRAY, 1);
+        g_renderer.drawText(34, 36, truncateText(subtitle, 50), COLOR_GRAY, 1);
     }
 }
 
@@ -139,8 +145,8 @@ void MenuScreens::renderSongSelect(const std::vector<SongItem>& songs, size_t se
         // Title & Artist
         int text_x = icon_x + icon_sz + 10;
         unsigned int title_col = sel ? COLOR_WHITE : COLOR_RGBA(220, 215, 235, 255);
-        g_renderer.drawText(text_x, y + 8, song.title, title_col, 1);
-        g_renderer.drawText(text_x, y + 23, song.artist, COLOR_GRAY, 1);
+        g_renderer.drawText(text_x, y + 8, truncateText(song.title, 26), title_col, 1);
+        g_renderer.drawText(text_x, y + 23, truncateText(song.artist, 26), COLOR_GRAY, 1);
 
         // BPM & High score on right
         char bpm_buf[32];
@@ -175,7 +181,8 @@ void MenuScreens::renderSongSelect(const std::vector<SongItem>& songs, size_t se
 void MenuScreens::renderDifficultySelect(const SongItem& song, int selected_diff) {
     g_renderer.renderBackground(false);
 
-    drawHeaderBar("Difficulty", song.title + " - " + song.artist);
+    std::string diff_sub = song.title + (song.artist.empty() ? "" : (" - " + song.artist));
+    drawHeaderBar("Difficulty", truncateText(diff_sub, 48));
 
     // List difficulties available in track
     static const char* all_diffs[4] = { "Easy", "Medium", "Hard", "Expert" };
@@ -380,24 +387,33 @@ void MenuScreens::renderPause(int selected_index) {
 void MenuScreens::renderResults(const SongItem& song, const std::string& diff_name, const GameSession& session, bool is_new_best) {
     g_renderer.renderBackground(false);
 
-    // Results container card
-    int bx = 70, by = 20, bw = 340, bh = 226;
+    // Results container card (centered on 480x272 PSP screen)
+    int bx = 36, by = 14, bw = 408, bh = 236;
     g_renderer.drawRoundedRect(bx, by, bw, bh, 6, COLOR_PANEL_BG, COLOR_PANEL_BORDER);
 
     // Header
     if (session.failed) {
-        g_renderer.drawTextCentered(240, by + 16, "SONG FAILED", COLOR_LANE_RED, 2);
+        g_renderer.drawTextCentered(240, by + 12, "SONG FAILED", COLOR_LANE_RED, 2);
     } else {
-        g_renderer.drawTextCentered(240, by + 16, "SONG COMPLETE", COLOR_WHITE, 2);
+        g_renderer.drawTextCentered(240, by + 12, "SONG COMPLETE", COLOR_WHITE, 2);
     }
 
-    // Subtitle
-    g_renderer.drawTextCentered(240, by + 36, song.title + " · " + diff_name, COLOR_GRAY, 1);
+    // Subtitle: Song Title on line 1, Artist & Difficulty on line 2
+    std::string title_str = truncateText(song.title, 46);
+    g_renderer.drawTextCentered(240, by + 34, title_str, COLOR_WHITE, 1);
+
+    std::string info_str;
+    if (!song.artist.empty()) {
+        info_str = truncateText(song.artist, 28) + "  -  " + diff_name;
+    } else {
+        info_str = diff_name;
+    }
+    g_renderer.drawTextCentered(240, by + 46, info_str, COLOR_GRAY, 1);
 
     // 5 Stars
     int stars = session.calculateStars();
     for (int i = 0; i < 5; ++i) {
-        g_renderer.drawStar(240 - 56 + i * 28, by + 60, 10, i < stars);
+        g_renderer.drawStar(240 - 56 + i * 28, by + 62, 10, i < stars);
     }
 
     // Score
@@ -406,27 +422,50 @@ void MenuScreens::renderResults(const SongItem& song, const std::string& diff_na
     g_renderer.drawTextCentered(240, by + 90, score_buf, COLOR_WHITE, 3);
 
     if (is_new_best) {
-        g_renderer.drawTextCentered(240, by + 120, "NEW BEST SCORE!", COLOR_GOLD, 1);
+        g_renderer.drawTextCentered(240, by + 118, "NEW BEST SCORE!", COLOR_GOLD, 1);
     }
 
-    // Stats Grid
-    int y_stats = by + 144;
+    // Stats Grid - 3 distinct, styled sub-panels
+    int panel_y = by + 134;
+    int panel_w = 118, panel_h = 44;
+
+    // Panel 1: Accuracy
+    int p1_x = 48;
+    g_renderer.drawRoundedRect(p1_x, panel_y, panel_w, panel_h, 4,
+                               COLOR_RGBA(255, 255, 255, 12), COLOR_PANEL_BORDER);
     char acc_buf[32];
     std::snprintf(acc_buf, sizeof(acc_buf), "%d%%", static_cast<int>(session.accuracy * 100.0));
-    g_renderer.drawTextCentered(130, y_stats, acc_buf, COLOR_WHITE, 2);
-    g_renderer.drawTextCentered(130, y_stats + 18, "Accuracy", COLOR_GRAY, 1);
+    unsigned int acc_col = (session.accuracy >= 0.999) ? COLOR_GOLD :
+                           ((session.accuracy >= 0.8) ? COLOR_WHITE : COLOR_GRAY);
+    g_renderer.drawTextCentered(p1_x + panel_w / 2, panel_y + 6, acc_buf, acc_col, 2);
+    g_renderer.drawTextCentered(p1_x + panel_w / 2, panel_y + 26, "Accuracy", COLOR_GRAY, 1);
 
+    // Panel 2: Best Streak
+    int p2_x = 181;
+    g_renderer.drawRoundedRect(p2_x, panel_y, panel_w, panel_h, 4,
+                               COLOR_RGBA(255, 255, 255, 12), COLOR_PANEL_BORDER);
     char streak_buf[32];
     std::snprintf(streak_buf, sizeof(streak_buf), "%lu", static_cast<unsigned long>(session.max_streak));
-    g_renderer.drawTextCentered(240, y_stats, streak_buf, COLOR_WHITE, 2);
-    g_renderer.drawTextCentered(240, y_stats + 18, "Best Streak", COLOR_GRAY, 1);
+    g_renderer.drawTextCentered(p2_x + panel_w / 2, panel_y + 6, streak_buf, COLOR_WHITE, 2);
+    g_renderer.drawTextCentered(p2_x + panel_w / 2, panel_y + 26, "Best Streak", COLOR_GRAY, 1);
 
-    char notes_buf[32];
-    std::snprintf(notes_buf, sizeof(notes_buf), "%lu / %lu",
-                  static_cast<unsigned long>(session.notes_hit),
-                  static_cast<unsigned long>(session.notes_hit + session.notes_missed));
-    g_renderer.drawTextCentered(350, y_stats, notes_buf, COLOR_WHITE, 2);
-    g_renderer.drawTextCentered(350, y_stats + 18, "Notes Hit", COLOR_GRAY, 1);
+    // Panel 3: Notes Hit
+    int p3_x = 314;
+    g_renderer.drawRoundedRect(p3_x, panel_y, panel_w, panel_h, 4,
+                               COLOR_RGBA(255, 255, 255, 12), COLOR_PANEL_BORDER);
+    char hit_buf[32];
+    std::snprintf(hit_buf, sizeof(hit_buf), "%lu", static_cast<unsigned long>(session.notes_hit));
+    unsigned long total_notes = static_cast<unsigned long>(session.notes_hit + session.notes_missed);
+    unsigned int hit_col = (session.notes_missed == 0 && session.notes_hit > 0) ? COLOR_GOLD : COLOR_WHITE;
+    g_renderer.drawTextCentered(p3_x + panel_w / 2, panel_y + 6, hit_buf, hit_col, 2);
+
+    char total_buf[32];
+    if (total_notes > 0) {
+        std::snprintf(total_buf, sizeof(total_buf), "/ %lu Notes", total_notes);
+    } else {
+        std::snprintf(total_buf, sizeof(total_buf), "Notes Hit");
+    }
+    g_renderer.drawTextCentered(p3_x + panel_w / 2, panel_y + 26, total_buf, COLOR_GRAY, 1);
 
     // Bottom hints
     g_renderer.drawButtonHint(160, 254, ICON_CROSS, "Retry");

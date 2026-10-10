@@ -17,6 +17,7 @@ enum AppState {
 };
 
 void drawHeaderBar(const std::string& title, const std::string& subtitle = "");
+std::string truncateText(const std::string& str, size_t max_len);
 
 #endif // UI_COMMON_H
 

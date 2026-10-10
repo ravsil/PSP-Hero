@@ -298,8 +298,12 @@ void HighwayRenderer::renderHUD(const ChartSong& song, const ChartTrack& track, 
     }
 
     // 2. Song title & artist at top left
-    g_renderer.drawText(10, 6, song.name, COLOR_WHITE, 1);
-    g_renderer.drawText(10, 16, song.artist, COLOR_GRAY, 1);
+    std::string hud_title = song.name;
+    if (hud_title.length() > 15) hud_title = hud_title.substr(0, 13) + "..";
+    std::string hud_artist = song.artist;
+    if (hud_artist.length() > 15) hud_artist = hud_artist.substr(0, 13) + "..";
+    g_renderer.drawText(10, 6, hud_title, COLOR_WHITE, 1);
+    g_renderer.drawText(10, 16, hud_artist, COLOR_GRAY, 1);
 
     // 3. Score counter
     g_renderer.drawTextRight(110, 32, "Score", COLOR_GRAY, 1);

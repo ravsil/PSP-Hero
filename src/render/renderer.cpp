@@ -359,7 +359,33 @@ void Renderer::drawText(int x, int y, const std::string& text, unsigned int colo
 
     for (int i = 0; i < len; ++i) {
         unsigned char ch = static_cast<unsigned char>(text[i]);
-        if (ch >= 128) ch = '?';
+        if (ch == 0xC2 && i + 1 < len && static_cast<unsigned char>(text[i + 1]) == 0xB7) {
+            ch = '-'; // Middle dot · -> -
+            i++;
+        } else if (ch == 0xE2 && i + 2 < len && static_cast<unsigned char>(text[i + 1]) == 0x80) {
+            unsigned char b3 = static_cast<unsigned char>(text[i + 2]);
+            if (b3 == 0x93 || b3 == 0x94) {
+                ch = '-'; // En-dash, Em-dash
+            } else if (b3 == 0x98 || b3 == 0x99) {
+                ch = '\''; // Smart single quotes
+            } else if (b3 == 0x9C || b3 == 0x9D) {
+                ch = '\"'; // Smart double quotes
+            } else if (b3 == 0xA2) {
+                ch = '-'; // Bullet •
+            } else {
+                ch = ' ';
+            }
+            i += 2;
+        } else if (ch >= 128) {
+            if ((ch & 0xE0) == 0xC0) {
+                if (i + 1 < len) i += 1;
+            } else if ((ch & 0xF0) == 0xE0) {
+                if (i + 2 < len) i += 2;
+            } else if ((ch & 0xF8) == 0xF0) {
+                if (i + 3 < len) i += 3;
+            }
+            ch = '?';
+        }
 
         if (ch == ' ') {
             cur_x += 8 * scale;
@@ -418,8 +444,26 @@ void Renderer::drawTextSpaced(int cx, int y, const std::string& text, unsigned i
 
 int Renderer::getTextWidth(const std::string& text, int scale, int spacing) {
     if (text.empty()) return 0;
+    int glyphs = 0;
     int len = static_cast<int>(text.length());
-    return len * 8 * scale + (len - 1) * spacing;
+    for (int i = 0; i < len; ++i) {
+        unsigned char ch = static_cast<unsigned char>(text[i]);
+        if (ch == 0xC2 && i + 1 < len && static_cast<unsigned char>(text[i + 1]) == 0xB7) {
+            i++;
+        } else if (ch == 0xE2 && i + 2 < len && static_cast<unsigned char>(text[i + 1]) == 0x80) {
+            i += 2;
+        } else if (ch >= 128) {
+            if ((ch & 0xE0) == 0xC0) {
+                if (i + 1 < len) i += 1;
+            } else if ((ch & 0xF0) == 0xE0) {
+                if (i + 2 < len) i += 2;
+            } else if ((ch & 0xF8) == 0xF0) {
+                if (i + 3 < len) i += 3;
+            }
+        }
+        glyphs++;
+    }
+    return glyphs * 8 * scale + (glyphs > 0 ? (glyphs - 1) * spacing : 0);
 }
 
 void Renderer::updateBackground(float dt, float bpm, bool star_power) {
