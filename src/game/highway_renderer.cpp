@@ -118,16 +118,15 @@ void HighwayRenderer::renderHighwayBase(double current_time, double travel_time,
                         static_cast<int>(CX - hw_bot), static_cast<int>(SCR_H),
                         bed_col);
 
-    // 5 colored lane strips (subtle tint when unpressed, bright glow when held - matches how_I_want.png)
+    // Pressed lane glow bands (only when firing/holding a fret button)
     for (int i = 0; i < 5; ++i) {
+        if (!(held_frets_mask & (1u << i))) continue;
         float x0_top = getLaneX(i, SMIN) - 0.5f * LW * SMIN;
         float x1_top = getLaneX(i, SMIN) + 0.5f * LW * SMIN;
         float x0_bot = getLaneX(i, SB) - 0.5f * LW * SB;
         float x1_bot = getLaneX(i, SB) + 0.5f * LW * SB;
 
-        bool lit = (held_frets_mask & (1u << i)) != 0;
-        unsigned int alpha = lit ? 0x48000000 : 0x14000000;
-        unsigned int col = (Renderer::getLaneColor(i) & 0x00FFFFFF) | alpha;
+        unsigned int col = (Renderer::getLaneColor(i) & 0x00FFFFFF) | 0x48000000;
         g_renderer.drawQuad(static_cast<int>(x0_top), static_cast<int>(YT),
                             static_cast<int>(x1_top), static_cast<int>(YT),
                             static_cast<int>(x1_bot), static_cast<int>(SCR_H),

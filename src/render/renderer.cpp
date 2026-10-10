@@ -531,31 +531,14 @@ void Renderer::renderBackground(bool star_power, bool in_game) {
         drawRect(bx, by, 10, 2, COLOR_RGBA(255, 255, 255, 120));
     }
 
-    // 4. Five-segment glowing outline
-    if (in_game) {
-        // Highway framing halo: large arc surrounding the highway matching prototype (how_I_want.png)
-        float cx = 240.0f, cy = 175.0f;
-        float r = 158.0f + m_pulse * 6.0f;
-
-        // Red (upper-left, curves down to left rail)
-        drawArc(static_cast<int>(cx), static_cast<int>(cy), static_cast<int>(r), -2.48f, -1.65f, COLOR_LANE_RED, 2);
-        // Green (lower-left)
-        drawArc(static_cast<int>(cx), static_cast<int>(cy), static_cast<int>(r), -3.14159f, -2.56f, COLOR_LANE_GREEN, 2);
-
-        // Blue (upper-right, curves from right rail)
-        drawArc(static_cast<int>(cx), static_cast<int>(cy), static_cast<int>(r), -1.49f, -0.66f, COLOR_LANE_BLUE, 2);
-        // Orange (lower-right)
-        drawArc(static_cast<int>(cx), static_cast<int>(cy), static_cast<int>(r), -0.58f, 0.0f, COLOR_LANE_ORANGE, 2);
-    } else {
-        // Ambient spinning ring for menus
-        float cx = 240.0f, cy = 118.0f;
-        float r = 78.0f + m_pulse * 8.0f;
-        for (int i = 0; i < 5; ++i) {
-            float a0 = m_ring_rot + i * (6.2831853f / 5.0f);
-            float a1 = a0 + (6.2831853f / 5.0f) * 0.76f;
-            unsigned int col = getLaneColor(i);
-            drawArc(static_cast<int>(cx), static_cast<int>(cy), static_cast<int>(r), a0, a1, col, 2);
-        }
+    // 4. Five-segment rotating glowing wheel behind center
+    float cx = 240.0f, cy = 118.0f;
+    float r = 78.0f + m_pulse * 8.0f;
+    for (int i = 0; i < 5; ++i) {
+        float a0 = m_ring_rot + i * (6.2831853f / 5.0f);
+        float a1 = a0 + (6.2831853f / 5.0f) * 0.76f;
+        unsigned int col = getLaneColor(i);
+        drawArc(static_cast<int>(cx), static_cast<int>(cy), static_cast<int>(r), a0, a1, col, 2);
     }
 }
 
