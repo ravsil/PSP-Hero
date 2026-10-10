@@ -1,6 +1,7 @@
 song
 *.o
 *.elf
+*.prx
 PARAM.SFO
 test_parser
 EBOOT.PBP

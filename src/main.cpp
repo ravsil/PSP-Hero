@@ -74,10 +74,13 @@ int main(int argc, char* argv[]) {
 
     // Locate chart file
     std::vector<std::string> chart_candidates = {
+        "song/Aerials/notes.chart",
         "song/notes.chart",
         "notes.chart",
+        "ms0:/PSP/GAME/cloneHero/song/Aerials/notes.chart",
         "ms0:/PSP/GAME/cloneHero/song/notes.chart",
         "ms0:/PSP/GAME/cloneHero/notes.chart",
+        "./song/Aerials/notes.chart",
         "./song/notes.chart"
     };
 
@@ -111,8 +114,10 @@ int main(int argc, char* argv[]) {
 
     // Load companion song.ini
     std::vector<std::string> ini_candidates = {
+        "song/Aerials/song.ini",
         "song/song.ini",
         "song.ini",
+        "ms0:/PSP/GAME/cloneHero/song/Aerials/song.ini",
         "ms0:/PSP/GAME/cloneHero/song/song.ini",
         "ms0:/PSP/GAME/cloneHero/song.ini"
     };
@@ -137,8 +142,10 @@ int main(int argc, char* argv[]) {
 
     // Locate audio file
     std::vector<std::string> audio_candidates = {
+        "song/Aerials/guitar.opus",
         "song/guitar.opus",
         "guitar.opus",
+        "ms0:/PSP/GAME/cloneHero/song/Aerials/guitar.opus",
         "ms0:/PSP/GAME/cloneHero/song/guitar.opus",
         "ms0:/PSP/GAME/cloneHero/guitar.opus"
     };
