@@ -3,12 +3,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <algorithm>
+#include <vector>
 
 #ifdef __PSP__
 #include <pspkernel.h>
 #include <pspaudio.h>
 #include <psprtc.h>
 #include <opus/opusfile.h>
+#include <tremor/ivorbisfile.h>
+#define MINIMP3_IMPLEMENTATION
+#include "minimp3_ex.h"
 #endif
 
 AudioPlayer::AudioPlayer()
@@ -18,10 +22,14 @@ AudioPlayer::AudioPlayer()
     , m_seek_requested(false)
     , m_seek_target_seconds(0.0)
     , m_volume(PSP_AUDIO_VOLUME_MAX)
+    , m_codec(AudioCodec::NONE)
     , m_opus_file(nullptr)
+    , m_vorbis_file(nullptr)
+    , m_mp3_dec(nullptr)
+    , m_channels(2)
     , m_audio_channel(-1)
     , m_use_src_channel(false)
-    , m_sample_rate(AUDIO_SAMPLE_RATE_48K)
+    , m_sample_rate(AUDIO_SAMPLE_RATE_44K)
     , m_thread_id(-1)
     , m_current_samples(0)
     , m_total_samples(0)
@@ -63,84 +71,77 @@ int AudioPlayer::audioThreadFunc(unsigned int args, void* argp) {
 
 void AudioPlayer::decodeChunk() {
 #ifdef __PSP__
-    if (!m_opus_file || !m_ring_buffer) return;
-    OggOpusFile* of = reinterpret_cast<OggOpusFile*>(m_opus_file);
+    if (m_codec == AudioCodec::NONE || !m_ring_buffer) return;
 
-    if (m_use_src_channel) {
-        // Native 48kHz decoding: decode directly into ring buffer without any software resampling
-        int space = RING_BUFFER_FRAMES - m_ring_count;
-        if (space < 1024) return;
+    int space = RING_BUFFER_FRAMES - m_ring_count;
+    if (space < 1024) return;
 
-        // Decode up to 1024 frames (or available contiguous space in ring buffer)
-        int contiguous = RING_BUFFER_FRAMES - m_ring_write_head;
-        int to_read = std::min(1024, std::min(space, contiguous));
+    int contiguous = RING_BUFFER_FRAMES - m_ring_write_head;
+    int to_read = std::min(1024, std::min(space, contiguous));
+    int frames_read = 0;
 
-        int frames_read = op_read_stereo(of, m_ring_buffer + m_ring_write_head * 2, to_read * 2);
-        if (frames_read > 0) {
-            m_ring_write_head = (m_ring_write_head + frames_read) % RING_BUFFER_FRAMES;
-            m_ring_count += frames_read;
+    if (m_codec == AudioCodec::OPUS) {
+        OggOpusFile* of = reinterpret_cast<OggOpusFile*>(m_opus_file);
+        if (of) {
+            frames_read = op_read_stereo(of, m_ring_buffer + m_ring_write_head * 2, to_read * 2);
         }
-    } else {
-        // Fallback: 48kHz to 44.1kHz linear resampling
-        const double ratio = 48000.0 / 44100.0;
-        int space = RING_BUFFER_FRAMES - m_ring_count;
-        if (space < 1024) return;
-
-        if (m_decode_avail_48k <= 1024) {
-            int base_idx = static_cast<int>(m_resample_src_pos);
-            int remain = m_decode_avail_48k - base_idx;
-            if (remain < 0) remain = 0;
-            if (remain > 4) remain = 4;
-
-            for (int i = 0; i < remain; ++i) {
-                m_decode_buf_48k[i * 2]     = m_decode_buf_48k[(base_idx + i) * 2];
-                m_decode_buf_48k[i * 2 + 1] = m_decode_buf_48k[(base_idx + i) * 2 + 1];
-            }
-            m_resample_src_pos -= base_idx;
-            if (m_resample_src_pos < 0.0) m_resample_src_pos = 0.0;
-
-            int frames_to_read = 2048 - remain;
-            int frames_read = op_read_stereo(of, m_decode_buf_48k + remain * 2, frames_to_read * 2);
-            if (frames_read > 0) {
-                m_decode_avail_48k = remain + frames_read;
+    } else if (m_codec == AudioCodec::VORBIS) {
+        OggVorbis_File* vf = reinterpret_cast<OggVorbis_File*>(m_vorbis_file);
+        if (vf) {
+            if (m_channels == 2) {
+                int bitstream = 0;
+                int bytes = ov_read(vf, reinterpret_cast<char*>(m_ring_buffer + m_ring_write_head * 2), to_read * 4, &bitstream);
+                if (bytes > 0) {
+                    frames_read = bytes / 4;
+                }
+            } else {
+                int bitstream = 0;
+                int16_t mono_buf[1024];
+                int bytes = ov_read(vf, reinterpret_cast<char*>(mono_buf), to_read * 2, &bitstream);
+                if (bytes > 0) {
+                    frames_read = bytes / 2;
+                    for (int i = 0; i < frames_read; ++i) {
+                        m_ring_buffer[(m_ring_write_head + i) * 2]     = mono_buf[i];
+                        m_ring_buffer[(m_ring_write_head + i) * 2 + 1] = mono_buf[i];
+                    }
+                }
             }
         }
-
-        // Resample available 48kHz samples
-        while (static_cast<int>(m_resample_src_pos) + 1 < m_decode_avail_48k &&
-               m_ring_count < (RING_BUFFER_FRAMES - 64)) {
-            int idx = static_cast<int>(m_resample_src_pos);
-            float frac = static_cast<float>(m_resample_src_pos - idx);
-
-            int16_t l = static_cast<int16_t>((1.0f - frac) * m_decode_buf_48k[idx * 2] +
-                                            frac * m_decode_buf_48k[(idx + 1) * 2]);
-            int16_t r = static_cast<int16_t>((1.0f - frac) * m_decode_buf_48k[idx * 2 + 1] +
-                                            frac * m_decode_buf_48k[(idx + 1) * 2 + 1]);
-
-            m_ring_buffer[m_ring_write_head * 2]     = l;
-            m_ring_buffer[m_ring_write_head * 2 + 1] = r;
-
-            m_ring_write_head = (m_ring_write_head + 1) % RING_BUFFER_FRAMES;
-            m_ring_count++;
-
-            m_resample_src_pos += ratio;
+    } else if (m_codec == AudioCodec::MP3) {
+        mp3dec_ex_t* mp3 = reinterpret_cast<mp3dec_ex_t*>(m_mp3_dec);
+        if (mp3) {
+            if (m_channels == 2) {
+                size_t samples = mp3dec_ex_read(mp3, m_ring_buffer + m_ring_write_head * 2, to_read * 2);
+                frames_read = samples / 2;
+            } else {
+                int16_t mono_buf[1024];
+                size_t samples = mp3dec_ex_read(mp3, mono_buf, to_read);
+                frames_read = samples;
+                for (int i = 0; i < frames_read; ++i) {
+                    m_ring_buffer[(m_ring_write_head + i) * 2]     = mono_buf[i];
+                    m_ring_buffer[(m_ring_write_head + i) * 2 + 1] = mono_buf[i];
+                }
+            }
         }
+    }
+
+    if (frames_read > 0) {
+        m_ring_write_head = (m_ring_write_head + frames_read) % RING_BUFFER_FRAMES;
+        m_ring_count += frames_read;
     }
 #endif
 }
 
 void AudioPlayer::runAudioLoop() {
 #ifdef __PSP__
-    // Try reserving native 48kHz SRC channel first
-    m_audio_channel = sceAudioSRCChReserve(AUDIO_BLOCK_SAMPLES, AUDIO_SAMPLE_RATE_48K, 2);
+    // Reserve hardware SRC channel using current song's sample rate
+    m_audio_channel = sceAudioSRCChReserve(AUDIO_BLOCK_SAMPLES, m_sample_rate, 2);
     if (m_audio_channel >= 0) {
         m_use_src_channel = true;
-        m_sample_rate = AUDIO_SAMPLE_RATE_48K;
     } else {
         // Fallback to standard 44.1kHz channel
         m_audio_channel = sceAudioChReserve(PSP_AUDIO_NEXT_CHANNEL, AUDIO_BLOCK_SAMPLES, PSP_AUDIO_FORMAT_STEREO);
         m_use_src_channel = false;
-        m_sample_rate = AUDIO_SAMPLE_RATE_44K;
         if (m_audio_channel < 0) {
             m_use_fallback_clock = true;
             return;
@@ -151,28 +152,30 @@ void AudioPlayer::runAudioLoop() {
     int16_t silence_block[AUDIO_BLOCK_SAMPLES * 2];
     std::memset(silence_block, 0, sizeof(silence_block));
 
-    OggOpusFile* of = reinterpret_cast<OggOpusFile*>(m_opus_file);
-
-    // Initial pre-buffer (~8,192 frames, roughly 170ms)
+    // Initial pre-buffer (~8,192 frames, roughly 170-185ms)
     for (int i = 0; i < 8 && m_thread_running; ++i) {
         decodeChunk();
     }
 
     while (m_thread_running) {
         if (m_seek_requested) {
-            int64_t target_48k = static_cast<int64_t>(m_seek_target_seconds * AUDIO_SAMPLE_RATE_48K);
-            if (target_48k < 0) target_48k = 0;
-            if (target_48k > m_total_samples) target_48k = m_total_samples;
+            int64_t target_samples = static_cast<int64_t>(m_seek_target_seconds * m_sample_rate);
+            if (target_samples < 0) target_samples = 0;
+            if (target_samples > m_total_samples) target_samples = m_total_samples;
 
-            op_pcm_seek(of, target_48k);
+            if (m_codec == AudioCodec::OPUS && m_opus_file) {
+                op_pcm_seek(reinterpret_cast<OggOpusFile*>(m_opus_file), target_samples);
+            } else if (m_codec == AudioCodec::VORBIS && m_vorbis_file) {
+                ov_pcm_seek(reinterpret_cast<OggVorbis_File*>(m_vorbis_file), target_samples);
+            } else if (m_codec == AudioCodec::MP3 && m_mp3_dec) {
+                mp3dec_ex_seek(reinterpret_cast<mp3dec_ex_t*>(m_mp3_dec), target_samples * m_channels);
+            }
 
             // Flush ring buffer
             m_ring_write_head = 0;
             m_ring_read_tail = 0;
             m_ring_count = 0;
-            m_decode_avail_48k = 0;
-            m_resample_src_pos = 0.0;
-            m_current_samples = static_cast<int64_t>(m_seek_target_seconds * m_sample_rate);
+            m_current_samples = target_samples;
             sceRtcGetCurrentTick(&m_last_block_tick);
             m_seek_requested = false;
 
@@ -251,7 +254,9 @@ bool AudioPlayer::init(const std::string& filepath) {
     m_total_samples = 0;
     m_total_duration = 0.0;
     m_clock_offset = 0.0;
-    m_sample_rate = AUDIO_SAMPLE_RATE_48K;
+    m_sample_rate = AUDIO_SAMPLE_RATE_44K;
+    m_codec = AudioCodec::NONE;
+    m_channels = 2;
 
 #ifdef __PSP__
     sceRtcGetCurrentTick(&m_playback_start_tick);
@@ -263,22 +268,96 @@ bool AudioPlayer::init(const std::string& filepath) {
     }
 
 #ifdef __PSP__
-    int error = 0;
-    OggOpusFile* of = op_open_file(filepath.c_str(), &error);
-    if (!of) {
-        std::string alt = "song/" + filepath;
-        of = op_open_file(alt.c_str(), &error);
+    std::vector<std::string> path_candidates = {
+        filepath,
+        "songs/" + filepath,
+        "song/" + filepath,
+        "ms0:/PSP/GAME/cloneHero/" + filepath
+    };
+
+    std::string valid_path;
+    for (const auto& p : path_candidates) {
+        FILE* f = std::fopen(p.c_str(), "rb");
+        if (f) {
+            std::fclose(f);
+            valid_path = p;
+            break;
+        }
+    }
+    if (valid_path.empty()) {
+        valid_path = filepath;
     }
 
-    if (of) {
-        // Disable dithering for maximum MIPS decoding throughput
-        op_set_dither_enabled(of, 0);
+    // Determine extension in lowercase
+    std::string ext;
+    size_t dot = valid_path.find_last_of('.');
+    if (dot != std::string::npos) {
+        ext = valid_path.substr(dot);
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    }
 
-        m_opus_file = of;
-        m_total_samples = op_pcm_total(of, -1);
-        m_total_duration = static_cast<double>(m_total_samples) / AUDIO_SAMPLE_RATE_48K;
+    if (ext == ".opus") {
+        int error = 0;
+        OggOpusFile* of = op_open_file(valid_path.c_str(), &error);
+        if (of) {
+            op_set_dither_enabled(of, 0);
+            m_opus_file = of;
+            m_codec = AudioCodec::OPUS;
+            m_sample_rate = AUDIO_SAMPLE_RATE_48K;
+            m_channels = 2;
+            m_total_samples = op_pcm_total(of, -1);
+            m_total_duration = static_cast<double>(m_total_samples) / m_sample_rate;
+            m_loaded = true;
+        }
+    } else if (ext == ".ogg") {
+        // Try Tremor Vorbis first
+        OggVorbis_File* vf = new OggVorbis_File();
+        FILE* f = std::fopen(valid_path.c_str(), "rb");
+        if (f) {
+            if (ov_open(f, vf, NULL, 0) == 0) {
+                vorbis_info* vi = ov_info(vf, -1);
+                m_vorbis_file = vf;
+                m_codec = AudioCodec::VORBIS;
+                m_sample_rate = vi ? vi->rate : 44100;
+                m_channels = vi ? vi->channels : 2;
+                m_total_samples = ov_pcm_total(vf, -1);
+                m_total_duration = static_cast<double>(m_total_samples) / m_sample_rate;
+                m_loaded = true;
+            } else {
+                std::fclose(f);
+                delete vf;
+                // If it wasn't Vorbis, it might be an Opus stream with .ogg extension
+                int error = 0;
+                OggOpusFile* of = op_open_file(valid_path.c_str(), &error);
+                if (of) {
+                    op_set_dither_enabled(of, 0);
+                    m_opus_file = of;
+                    m_codec = AudioCodec::OPUS;
+                    m_sample_rate = AUDIO_SAMPLE_RATE_48K;
+                    m_channels = 2;
+                    m_total_samples = op_pcm_total(of, -1);
+                    m_total_duration = static_cast<double>(m_total_samples) / m_sample_rate;
+                    m_loaded = true;
+                }
+            }
+        }
+    } else if (ext == ".mp3") {
+        mp3dec_ex_t* mp3 = new mp3dec_ex_t();
+        if (mp3dec_ex_open(mp3, valid_path.c_str(), MP3D_SEEK_TO_SAMPLE) == 0) {
+            m_mp3_dec = mp3;
+            m_codec = AudioCodec::MP3;
+            m_sample_rate = mp3->info.hz ? mp3->info.hz : 44100;
+            m_channels = mp3->info.channels ? mp3->info.channels : 2;
+            m_total_samples = mp3->samples / (m_channels > 0 ? m_channels : 1);
+            m_total_duration = static_cast<double>(m_total_samples) / m_sample_rate;
+            m_loaded = true;
+        } else {
+            delete mp3;
+        }
+    }
+
+    if (m_loaded) {
         m_current_samples = 0;
-        m_loaded = true;
         m_use_fallback_clock = false;
 
         // Reset ring buffer heads
@@ -403,11 +482,22 @@ void AudioPlayer::shutdown() {
         m_thread_id = -1;
     }
 
-    if (m_opus_file) {
+    if (m_codec == AudioCodec::OPUS && m_opus_file) {
         op_free(reinterpret_cast<OggOpusFile*>(m_opus_file));
         m_opus_file = nullptr;
+    } else if (m_codec == AudioCodec::VORBIS && m_vorbis_file) {
+        OggVorbis_File* vf = reinterpret_cast<OggVorbis_File*>(m_vorbis_file);
+        ov_clear(vf);
+        delete vf;
+        m_vorbis_file = nullptr;
+    } else if (m_codec == AudioCodec::MP3 && m_mp3_dec) {
+        mp3dec_ex_t* mp3 = reinterpret_cast<mp3dec_ex_t*>(m_mp3_dec);
+        mp3dec_ex_close(mp3);
+        delete mp3;
+        m_mp3_dec = nullptr;
     }
 #endif
 
+    m_codec = AudioCodec::NONE;
     m_loaded = false;
 }

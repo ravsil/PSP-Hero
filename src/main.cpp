@@ -92,8 +92,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Scan for available songs in "song/"
-    g_song_manager.scanSongs("song");
+    // Scan for available songs in "songs/" (with automatic fallbacks)
+    g_song_manager.scanSongs("songs");
 
     AudioPlayer audio;
     HighwayRenderer highway;

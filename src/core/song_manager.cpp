@@ -191,8 +191,14 @@ bool SongManager::scanSongs(const std::string& base_path) {
 
     std::vector<std::string> search_roots = {
         base_path,
+        "songs",
+        "song",
         "ms0:/PSP/GAME/cloneHero/" + base_path,
-        "./" + base_path
+        "ms0:/PSP/GAME/cloneHero/songs",
+        "ms0:/PSP/GAME/cloneHero/song",
+        "./" + base_path,
+        "./songs",
+        "./song"
     };
 
     std::string root_dir;
@@ -255,13 +261,22 @@ bool SongManager::scanSongs(const std::string& base_path) {
             parseIniFile(song.ini_path, song);
         }
 
-        // Audio stream
+        // Audio stream: prioritize full song mix if available, then guitar stem
         song.audio_path = findFirstExisting({
-            sub_path + "/guitar.opus",
             sub_path + "/song.opus",
+            sub_path + "/guitar.opus",
             sub_path + "/music.opus",
             sub_path + "/audio.opus",
-            sub_path + "/tracks.opus"
+            sub_path + "/tracks.opus",
+            sub_path + "/song.ogg",
+            sub_path + "/guitar.ogg",
+            sub_path + "/music.ogg",
+            sub_path + "/audio.ogg",
+            sub_path + "/tracks.ogg",
+            sub_path + "/song.mp3",
+            sub_path + "/guitar.mp3",
+            sub_path + "/music.mp3",
+            sub_path + "/audio.mp3"
         });
 
         // Album cover

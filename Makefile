@@ -16,7 +16,7 @@ ASFLAGS = $(CFLAGS)
 
 LIBDIR =
 LDFLAGS =
-LIBS = -lstdc++ -lopusfile -lopus -logg -lpspaudio -lpsppower -lpspgum -lpspgu -lpsprtc -lm
+LIBS = -lstdc++ -lopusfile -lopus -lvorbisidec -logg -lpspaudio -lpsppower -lpspgum -lpspgu -lpsprtc -lm
 
 BUILD_PRX = 1
 ENCRYPT = 1

@@ -165,7 +165,7 @@ int main(int argc, char* argv[]) {
     std::cout << "  Testing SongManager Multi-Song Scan   " << std::endl;
     std::cout << "========================================" << std::endl;
     SongManager sm;
-    bool scan_ok = sm.scanSongs("song");
+    bool scan_ok = sm.scanSongs("songs");
     std::cout << "  Songs found: " << sm.getSongCount() << " (Scan success: " << (scan_ok ? "true" : "false") << ")" << std::endl;
     for (size_t i = 0; i < sm.getSongCount(); ++i) {
         const SongItem* item = sm.getSong(i);

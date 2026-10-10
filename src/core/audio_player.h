@@ -9,12 +9,19 @@
 #define AUDIO_BLOCK_SAMPLES   1024
 #define RING_BUFFER_FRAMES    16384 // ~341ms at 48kHz
 
+enum class AudioCodec {
+    NONE,
+    OPUS,
+    VORBIS,
+    MP3
+};
+
 class AudioPlayer {
 public:
     AudioPlayer();
     ~AudioPlayer();
 
-    // Initialize audio system and load audio file (e.g. "song/Aerials/guitar.opus")
+    // Initialize audio system and load audio file (.opus, .ogg, or .mp3)
     bool init(const std::string& filepath);
 
     // Audio playback controls
@@ -29,6 +36,7 @@ public:
     bool isPlaying() const { return m_playing; }
     double getTimeSeconds() const;
     double getTotalDurationSeconds() const { return m_total_duration; }
+    int getSampleRate() const { return m_sample_rate; }
 
     // Shutdown and release resources
     void shutdown();
@@ -41,10 +49,15 @@ private:
     double m_seek_target_seconds;
     int m_volume;
 
-    // Opus and PSP audio state
-    void* m_opus_file; // OggOpusFile*
+    // Codec and audio stream handles
+    AudioCodec m_codec;
+    void* m_opus_file;   // OggOpusFile*
+    void* m_vorbis_file; // OggVorbis_File*
+    void* m_mp3_dec;     // mp3dec_ex_t*
+    int m_channels;      // 1 (mono) or 2 (stereo)
+
     int m_audio_channel;
-    bool m_use_src_channel; // True if using hardware 48kHz SRC channel
+    bool m_use_src_channel; // True if using hardware SRC channel
     int m_sample_rate;
     int m_thread_id;
     int64_t m_current_samples;
