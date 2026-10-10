@@ -18,9 +18,9 @@ PSP Hero supports three major compressed audio formats natively:
    - Dithering is explicitly disabled (`op_set_dither_enabled(of, 0)`) to eliminate float math on PSP MIPS R4000.
 
 2. **Ogg Vorbis (`.ogg`)**:
-   - Decoded via **Tremor** (`libvorbisidec`, integer fixed-point Vorbis decoder).
+   - Decoded via **stb_vorbis** (`stb_vorbis.c`, public domain Vorbis decoder).
+   - Clean 16-bit stereo decoding, replacing buggy SDK Tremor implementation.
    - Native sample rates: 44,100 Hz or 48,000 Hz stereo/mono.
-   - Zero floating-point CPU overhead.
 
 3. **MPEG Audio Layer 3 (`.mp3`)**:
    - Decoded via **minimp3** (`minimp3_ex.h`).

@@ -55,7 +55,7 @@ private:
     // Codec and audio stream handles
     AudioCodec m_codec;
     void* m_opus_file;   // OggOpusFile*
-    void* m_vorbis_file; // OggVorbis_File*
+    void* m_vorbis_file; // stb_vorbis*
     void* m_mp3_dec;     // mp3dec_ex_t*
     int m_channels;      // 1 (mono) or 2 (stereo)
 

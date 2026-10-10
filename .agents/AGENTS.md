@@ -6,7 +6,7 @@
 - **Platform**: Sony PlayStation Portable (MIPS R4000, 333 MHz) and PPSSPP emulator.
 - **Audio Engines**:
   - `libopusfile` / `libopus` for Opus audio (`.opus`, 48,000 Hz).
-  - Tremor (`libvorbisidec` / `tremor/ivorbisfile.h`) for Ogg Vorbis audio (`.ogg`, integer fixed-point decoding).
+  - `stb_vorbis` for Ogg Vorbis audio (`.ogg`, robust 16-bit stereo decoding replacing buggy Tremor).
   - `minimp3_ex.h` for MPEG Audio Layer 3 (`.mp3`, public-domain single header decoder).
   - PSP hardware Sample Rate Converter channel (`sceAudioSRCChReserve`) for 44.1 kHz / 48 kHz native playback.
 - **Rendering & Math**:

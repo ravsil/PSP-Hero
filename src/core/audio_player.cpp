@@ -10,7 +10,7 @@
 #include <pspaudio.h>
 #include <psprtc.h>
 #include <opus/opusfile.h>
-#include <tremor/ivorbisfile.h>
+#include "stb_vorbis.h"
 #define MINIMP3_IMPLEMENTATION
 #include "minimp3_ex.h"
 #endif
@@ -86,11 +86,19 @@ void AudioPlayer::decodeChunk() {
         OggOpusFile* of = reinterpret_cast<OggOpusFile*>(m_opus_file);
         if (of) {
             if (m_use_src_channel) {
-                frames_read = op_read_stereo(of, m_ring_buffer + m_ring_write_head * 2, to_read * 2);
-                if (frames_read <= 0) {
-                    m_eof_reached = true;
-                    frames_read = 0;
+                int total_frames = 0;
+                while (total_frames < to_read) {
+                    int16_t* dst = m_ring_buffer + (m_ring_write_head + total_frames) * 2;
+                    int needed_samples = (to_read - total_frames) * 2;
+                    int read_frames = op_read_stereo(of, dst, needed_samples);
+                    if (read_frames > 0) {
+                        total_frames += read_frames;
+                    } else {
+                        m_eof_reached = true;
+                        break;
+                    }
                 }
+                frames_read = total_frames;
             } else {
                 // 48kHz to 44.1kHz software fallback resampler
                 const double ratio = 48000.0 / 44100.0;
@@ -130,52 +138,18 @@ void AudioPlayer::decodeChunk() {
             }
         }
     } else if (m_codec == AudioCodec::VORBIS) {
-        OggVorbis_File* vf = reinterpret_cast<OggVorbis_File*>(m_vorbis_file);
-        if (vf) {
+        stb_vorbis* vorbis = reinterpret_cast<stb_vorbis*>(m_vorbis_file);
+        if (vorbis) {
             int total_frames = 0;
-            if (m_channels == 2) {
-                // Interleaved stereo: loop until all to_read frames are decoded
-                while (total_frames < to_read) {
-                    int bitstream = 0;
-                    char* dst = reinterpret_cast<char*>(m_ring_buffer + (m_ring_write_head + total_frames) * 2);
-                    int bytes_needed = (to_read - total_frames) * 4;
-                    long bytes_read = ov_read(vf, dst, bytes_needed, &bitstream);
-                    if (bytes_read > 0) {
-                        total_frames += bytes_read / 4;
-                    } else if (bytes_read == 0) {
-                        m_eof_reached = true;
-                        break; // EOF
-                    } else if (bytes_read == OV_HOLE) {
-                        continue; // Bitstream hole, retry
-                    } else {
-                        m_eof_reached = true;
-                        break; // Fatal error
-                    }
-                }
-            } else {
-                // Mono: read mono samples, expand to stereo in ring buffer
-                while (total_frames < to_read) {
-                    int bitstream = 0;
-                    int16_t mono_buf[1024];
-                    int frames_to_read = std::min(1024, to_read - total_frames);
-                    long bytes_read = ov_read(vf, reinterpret_cast<char*>(mono_buf), frames_to_read * 2, &bitstream);
-                    if (bytes_read > 0) {
-                        int read_samples = bytes_read / 2;
-                        for (int i = 0; i < read_samples; ++i) {
-                            int idx = (m_ring_write_head + total_frames + i) * 2;
-                            m_ring_buffer[idx]     = mono_buf[i];
-                            m_ring_buffer[idx + 1] = mono_buf[i];
-                        }
-                        total_frames += read_samples;
-                    } else if (bytes_read == 0) {
-                        m_eof_reached = true;
-                        break;
-                    } else if (bytes_read == OV_HOLE) {
-                        continue;
-                    } else {
-                        m_eof_reached = true;
-                        break;
-                    }
+            while (total_frames < to_read) {
+                int16_t* dst = m_ring_buffer + (m_ring_write_head + total_frames) * 2;
+                int needed_shorts = (to_read - total_frames) * 2;
+                int read_frames = stb_vorbis_get_samples_short_interleaved(vorbis, 2, dst, needed_shorts);
+                if (read_frames > 0) {
+                    total_frames += read_frames;
+                } else {
+                    m_eof_reached = true;
+                    break;
                 }
             }
             frames_read = total_frames;
@@ -266,7 +240,7 @@ void AudioPlayer::runAudioLoop() {
             if (m_codec == AudioCodec::OPUS && m_opus_file) {
                 op_pcm_seek(reinterpret_cast<OggOpusFile*>(m_opus_file), target_samples);
             } else if (m_codec == AudioCodec::VORBIS && m_vorbis_file) {
-                ov_pcm_seek(reinterpret_cast<OggVorbis_File*>(m_vorbis_file), target_samples);
+                stb_vorbis_seek(reinterpret_cast<stb_vorbis*>(m_vorbis_file), static_cast<unsigned int>(target_samples));
             } else if (m_codec == AudioCodec::MP3 && m_mp3_dec) {
                 mp3dec_ex_seek(reinterpret_cast<mp3dec_ex_t*>(m_mp3_dec), target_samples * m_channels);
             }
@@ -450,31 +424,18 @@ bool AudioPlayer::init(const std::string& filepath) {
             m_loaded = true;
         }
     } else if (ext == ".ogg") {
-        // Try Tremor Vorbis first
-        OggVorbis_File* vf = new OggVorbis_File();
-        int ret = ov_fopen(valid_path.c_str(), vf);
-        if (ret != 0) {
-            FILE* f = std::fopen(valid_path.c_str(), "rb");
-            if (f) {
-                ret = ov_open(f, vf, NULL, 0);
-                if (ret != 0) {
-                    std::fclose(f);
-                }
-            } else {
-                ret = -1;
-            }
-        }
-        if (ret == 0) {
-            vorbis_info* vi = ov_info(vf, -1);
-            m_vorbis_file = vf;
+        int err = 0;
+        stb_vorbis* vorbis = stb_vorbis_open_filename(valid_path.c_str(), &err, nullptr);
+        if (vorbis) {
+            stb_vorbis_info info = stb_vorbis_get_info(vorbis);
+            m_vorbis_file = vorbis;
             m_codec = AudioCodec::VORBIS;
-            m_sample_rate = vi ? vi->rate : 44100;
-            m_channels = vi ? vi->channels : 2;
-            m_total_samples = ov_pcm_total(vf, -1);
+            m_sample_rate = info.sample_rate ? info.sample_rate : 44100;
+            m_channels = 2; // stb_vorbis decodes as stereo
+            m_total_samples = stb_vorbis_stream_length_in_samples(vorbis);
             m_total_duration = static_cast<double>(m_total_samples) / m_sample_rate;
             m_loaded = true;
         } else {
-            delete vf;
             // If it wasn't Vorbis, it might be an Opus stream with .ogg extension
             int error = 0;
             OggOpusFile* of = op_open_file(valid_path.c_str(), &error);
@@ -640,9 +601,7 @@ void AudioPlayer::shutdown() {
         op_free(reinterpret_cast<OggOpusFile*>(m_opus_file));
         m_opus_file = nullptr;
     } else if (m_codec == AudioCodec::VORBIS && m_vorbis_file) {
-        OggVorbis_File* vf = reinterpret_cast<OggVorbis_File*>(m_vorbis_file);
-        ov_clear(vf);
-        delete vf;
+        stb_vorbis_close(reinterpret_cast<stb_vorbis*>(m_vorbis_file));
         m_vorbis_file = nullptr;
     } else if (m_codec == AudioCodec::MP3 && m_mp3_dec) {
         mp3dec_ex_t* mp3 = reinterpret_cast<mp3dec_ex_t*>(m_mp3_dec);

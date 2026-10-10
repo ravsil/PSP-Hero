@@ -4,6 +4,7 @@ OBJS = src/main.o \
        src/core/audio_player.o \
        src/core/song_manager.o \
        src/core/config.o \
+       src/core/stb_vorbis.o \
        src/render/renderer.o \
        src/game/highway_renderer.o \
        src/game/gameplay.o \
@@ -16,7 +17,7 @@ ASFLAGS = $(CFLAGS)
 
 LIBDIR =
 LDFLAGS =
-LIBS = -lstdc++ -lopusfile -lopus -lvorbisidec -logg -lpspaudio -lpsppower -lpspgum -lpspgu -lpsprtc -lm
+LIBS = -lstdc++ -lopusfile -lopus -logg -lpspaudio -lpsppower -lpspgum -lpspgu -lpsprtc -lm
 
 BUILD_PRX = 1
 ENCRYPT = 1
