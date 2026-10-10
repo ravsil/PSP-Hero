@@ -30,22 +30,27 @@ PSP Hero supports three major compressed audio formats natively:
 ---
 
 ## 2. Hardware Audio Channel & Sample Rates
-The PSP audio hardware provides a specialized Sample Rate Converter (SRC) channel:
-```cpp
-m_audio_channel = sceAudioSRCChReserve(AUDIO_BLOCK_SAMPLES, m_sample_rate, 2);
-```
-- For **48 kHz** audio (Opus): `sceAudioSRCChReserve(1024, 48000, 2)` outputs 48 kHz directly.
-- For **44.1 kHz** audio (Vorbis / MP3): `sceAudioSRCChReserve(1024, 44100, 2)` outputs 44.1 kHz natively in hardware without any software resampling burden.
-- Output function: `sceAudioSRCOutputBlocking(m_volume, out_block);`.
+The PSP audio hardware DAC operates natively at **44,100 Hz**:
+- **44.1 kHz Audio (All standard Vorbis `.ogg` & MP3 `.mp3`)**:
+  - Uses the standard PSP hardware channel:
+    `sceAudioChReserve(PSP_AUDIO_NEXT_CHANNEL, AUDIO_BLOCK_SAMPLES, PSP_AUDIO_FORMAT_STEREO)`
+  - Outputs directly to DAC via: `sceAudioOutputPannedBlocking(channel, volume, volume, buffer)`
+  - Zero conversion overhead, perfect bit-accurate playback on both hardware and PPSSPP.
+- **48.0 kHz Audio (Opus `.opus` & 48kHz streams)**:
+  - Uses the hardware Sample Rate Converter (SRC) channel:
+    `sceAudioSRCChReserve(AUDIO_BLOCK_SAMPLES, 48000, 2)`
+  - Outputs via: `sceAudioSRCOutputBlocking(volume, buffer)`
+  - Downsamples 48kHz -> 44.1kHz in hardware.
+  - *Note*: Never pass 44.1kHz into `sceAudioSRCChReserve`, as the SRC is designed for 48k downsampling and causes distortion or wrong pitch in emulators and hardware.
 
 ---
 
-## 3. Audio Thread Architecture & Deadlock Prevention
+## 3. Audio Thread Architecture & Buffer Management
 - Audio playback runs on a dedicated high-priority kernel thread (priority `0x18`, stack `64KB`).
-- Ring buffer holds **16,384 stereo frames** (~341ms at 48kHz).
-- Audio is decoded in chunks of 1,024 frames into the ring buffer.
+- Ring buffer holds **16,384 stereo frames** (~371ms at 44.1kHz / ~341ms at 48kHz).
+- **Vorbis & MP3 Packet Looping**: Tremor's `ov_read` and `mp3dec_ex_read` decode variable-length packets (e.g. 128-512 samples per call). `decodeChunk()` **MUST loop** until all 1,024 requested frames are filled or EOF is reached. Without looping, buffer starvation occurs, causing stuttering and silence gap output.
 - When paused or when underrun occurs, the thread outputs silence blocks to maintain audio DMA timing.
-- **CRITICAL**: Before loading a new song or returning to menus, `AudioPlayer::shutdown()` MUST be called to stop the thread and release the hardware channel via `sceAudioSRCChRelease()`. Failure to do so deadlocks the PSP hardware.
+- **CRITICAL**: Before loading a new song or returning to menus, `AudioPlayer::shutdown()` MUST be called to stop the thread and release the hardware channel (`sceAudioSRCChRelease()` or `sceAudioChRelease()`). Failure to do so deadlocks the PSP hardware.
 
 ---
 
