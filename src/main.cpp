@@ -92,6 +92,14 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+#ifdef __PSP__
+    uint64_t init_tick = 0;
+    sceRtcGetCurrentTick(&init_tick);
+    std::srand(static_cast<unsigned int>(init_tick));
+#else
+    std::srand(static_cast<unsigned int>(std::time(nullptr)));
+#endif
+
     // Scan for available songs in "songs/" (with automatic fallbacks)
     g_song_manager.scanSongs("songs");
 
@@ -168,9 +176,14 @@ int main(int argc, char* argv[]) {
             // Confirm selection
             if (buttons_down & PSP_CTRL_CROSS) {
                 if (menu_idx == 0) {
-                    // Quick Play
-                    if (g_song_manager.getSongCount() > 0) {
-                        current_song_idx = 0;
+                    // Quick Play: Pick a random song every time
+                    size_t count = g_song_manager.getSongCount();
+                    if (count > 0) {
+                        size_t pick = std::rand() % count;
+                        if (count > 1 && pick == current_song_idx) {
+                            pick = (pick + 1 + (std::rand() % (count - 1))) % count;
+                        }
+                        current_song_idx = pick;
                         selected_diff_idx = 0;
                         state = STATE_DIFFICULTY_SELECT;
                     }
@@ -193,21 +206,53 @@ int main(int argc, char* argv[]) {
         else if (state == STATE_SONG_SELECT) {
             size_t count = g_song_manager.getSongCount();
 
-            if (buttons_down & PSP_CTRL_UP) {
-                if (current_song_idx > 0) {
-                    current_song_idx--;
-                    if (static_cast<int>(current_song_idx) < song_scroll_offset) {
-                        song_scroll_offset = static_cast<int>(current_song_idx);
+            if (count > 0) {
+                if (buttons_down & PSP_CTRL_UP) {
+                    if (current_song_idx == 0) {
+                        current_song_idx = count - 1;
+                    } else {
+                        current_song_idx--;
                     }
                 }
-            }
-            if (buttons_down & PSP_CTRL_DOWN) {
-                if (current_song_idx + 1 < count) {
-                    current_song_idx++;
-                    if (static_cast<int>(current_song_idx) >= song_scroll_offset + 4) {
-                        song_scroll_offset = static_cast<int>(current_song_idx) - 3;
+                if (buttons_down & PSP_CTRL_DOWN) {
+                    if (current_song_idx + 1 >= count) {
+                        current_song_idx = 0;
+                    } else {
+                        current_song_idx++;
                     }
                 }
+                if (buttons_down & PSP_CTRL_LEFT) {
+                    // Page Up (by 4 items)
+                    if (current_song_idx >= 4) {
+                        current_song_idx -= 4;
+                    } else if (current_song_idx > 0) {
+                        current_song_idx = 0;
+                    } else {
+                        current_song_idx = (count > 4) ? (count - 1) : 0;
+                    }
+                }
+                if (buttons_down & PSP_CTRL_RIGHT) {
+                    // Page Down (by 4 items)
+                    if (current_song_idx + 4 < count) {
+                        current_song_idx += 4;
+                    } else if (current_song_idx < count - 1) {
+                        current_song_idx = count - 1;
+                    } else {
+                        current_song_idx = 0;
+                    }
+                }
+
+                // Keep scroll window aligned with current_song_idx
+                if (static_cast<int>(current_song_idx) < song_scroll_offset) {
+                    song_scroll_offset = static_cast<int>(current_song_idx);
+                } else if (static_cast<int>(current_song_idx) >= song_scroll_offset + 4) {
+                    song_scroll_offset = static_cast<int>(current_song_idx) - 3;
+                }
+                if (song_scroll_offset < 0) song_scroll_offset = 0;
+                if (count > 4 && song_scroll_offset > static_cast<int>(count - 4)) {
+                    song_scroll_offset = static_cast<int>(count - 4);
+                }
+                if (count <= 4) song_scroll_offset = 0;
             }
 
             if (buttons_down & PSP_CTRL_CROSS && count > 0) {

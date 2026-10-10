@@ -3,8 +3,28 @@
 #include <cmath>
 #include <algorithm>
 
+#ifdef __PSP__
+#include <psprtc.h>
+static double getMenuTimeSeconds() {
+    uint64_t tick;
+    sceRtcGetCurrentTick(&tick);
+    uint32_t freq = sceRtcGetTickResolution();
+    return static_cast<double>(tick) / freq;
+}
+#else
+#include <chrono>
+static double getMenuTimeSeconds() {
+    static auto start_time = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
+    return std::chrono::duration<double>(now - start_time).count();
+}
+#endif
+
 Texture MenuScreens::s_album_tex = { 0, 0, 0, nullptr, false };
 std::string MenuScreens::s_loaded_album_path = "";
+std::map<std::string, Texture> MenuScreens::s_cover_cache;
+size_t MenuScreens::s_last_selected_idx = (size_t)-1;
+double MenuScreens::s_selection_time = 0.0;
 
 std::string truncateText(const std::string& str, size_t max_len) {
     if (str.length() <= max_len) return str;
@@ -24,22 +44,36 @@ void drawHeaderBar(const std::string& title, const std::string& subtitle) {
 }
 
 void MenuScreens::loadSongCover(const SongItem& song) {
-    if (song.album_path == s_loaded_album_path) {
+    if (song.album_path.empty()) return;
+
+    auto it = s_cover_cache.find(song.album_path);
+    if (it != s_cover_cache.end()) {
+        s_album_tex = it->second;
+        s_loaded_album_path = song.album_path;
         return;
     }
-    unloadSongCover();
-    s_loaded_album_path = song.album_path;
 
-    if (!song.album_path.empty()) {
-        s_album_tex = g_renderer.loadTexture(song.album_path, 36, 36);
-    }
+    Texture tex = g_renderer.loadTexture(song.album_path, 36, 36);
+    s_cover_cache[song.album_path] = tex;
+    s_album_tex = tex;
+    s_loaded_album_path = song.album_path;
 }
 
 void MenuScreens::unloadSongCover() {
-    if (s_album_tex.is_valid) {
-        g_renderer.freeTexture(s_album_tex);
-    }
+    s_album_tex = { 0, 0, 0, nullptr, false };
     s_loaded_album_path = "";
+}
+
+void MenuScreens::clearCoverCache() {
+    for (auto& pair : s_cover_cache) {
+        if (pair.second.is_valid) {
+            g_renderer.freeTexture(pair.second);
+        }
+    }
+    s_cover_cache.clear();
+    s_album_tex = { 0, 0, 0, nullptr, false };
+    s_loaded_album_path = "";
+    s_last_selected_idx = (size_t)-1;
 }
 
 void MenuScreens::renderTitle(float time) {
@@ -108,6 +142,29 @@ void MenuScreens::renderSongSelect(const std::vector<SongItem>& songs, size_t se
         return;
     }
 
+    // Debounced cover loading: track time resting on currently selected song
+    double cur_time = getMenuTimeSeconds();
+    if (selected_index != s_last_selected_idx) {
+        s_last_selected_idx = selected_index;
+        s_selection_time = cur_time;
+    }
+
+    if (selected_index < songs.size()) {
+        const auto& cur_song = songs[selected_index];
+        if (!cur_song.album_path.empty()) {
+            auto it = s_cover_cache.find(cur_song.album_path);
+            if (it == s_cover_cache.end()) {
+                // If the user rests on this song for at least 80ms, load and cache it
+                if ((cur_time - s_selection_time) >= 0.08) {
+                    loadSongCover(cur_song);
+                }
+            } else {
+                s_album_tex = it->second;
+                s_loaded_album_path = cur_song.album_path;
+            }
+        }
+    }
+
     // Display 4 cards
     const int cards_per_page = 4;
     for (int i = 0; i < cards_per_page; ++i) {
@@ -130,13 +187,16 @@ void MenuScreens::renderSongSelect(const std::vector<SongItem>& songs, size_t se
 
         // Album artwork or colored icon
         int icon_x = bx + 4, icon_y = y + 3, icon_sz = 36;
-        if (sel) {
-            loadSongCover(song);
+        bool drew_cover = false;
+        if (!song.album_path.empty()) {
+            auto it = s_cover_cache.find(song.album_path);
+            if (it != s_cover_cache.end() && it->second.is_valid) {
+                g_renderer.drawTexture(it->second, icon_x, icon_y, icon_sz, icon_sz);
+                drew_cover = true;
+            }
         }
 
-        if (sel && s_album_tex.is_valid && s_loaded_album_path == song.album_path) {
-            g_renderer.drawTexture(s_album_tex, icon_x, icon_y, icon_sz, icon_sz);
-        } else {
+        if (!drew_cover) {
             g_renderer.drawRoundedRect(icon_x, icon_y, icon_sz, icon_sz, 2, Renderer::getLaneColor(idx % 5), 0);
             char initial[2] = { song.title.empty() ? '?' : song.title[0], '\0' };
             g_renderer.drawTextCentered(icon_x + icon_sz / 2, icon_y + 11, initial, COLOR_WHITE, 2);
@@ -171,7 +231,7 @@ void MenuScreens::renderSongSelect(const std::vector<SongItem>& songs, size_t se
     int hx = 16;
     hx += g_renderer.drawButtonHint(hx, 252, ICON_CROSS, "Select");
     hx += g_renderer.drawButtonHint(hx + 8, 252, ICON_CIRCLE, "Back");
-    hx += g_renderer.drawButtonHint(hx + 8, 252, ICON_DPAD, "Move");
+    hx += g_renderer.drawButtonHint(hx + 8, 252, ICON_DPAD, "Move / Page");
 
     char count_buf[32];
     std::snprintf(count_buf, sizeof(count_buf), "%zu / %zu", selected_index + 1, songs.size());

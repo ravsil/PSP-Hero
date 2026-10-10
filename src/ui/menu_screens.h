@@ -6,6 +6,8 @@
 #include "gameplay.h"
 #include "config.h"
 
+#include <map>
+
 class MenuScreens {
 public:
     static void renderTitle(float time);
@@ -34,10 +36,14 @@ public:
     // Texture cache for album covers
     static void loadSongCover(const SongItem& song);
     static void unloadSongCover();
+    static void clearCoverCache();
 
 private:
     static Texture s_album_tex;
     static std::string s_loaded_album_path;
+    static std::map<std::string, Texture> s_cover_cache;
+    static size_t s_last_selected_idx;
+    static double s_selection_time;
 };
 
 #endif // MENU_SCREENS_H
