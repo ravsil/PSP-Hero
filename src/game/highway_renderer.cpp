@@ -1,617 +1,415 @@
 #include "highway_renderer.h"
-#include "font8x8.h"
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
 #include <cmath>
+#include <cstdio>
 #include <algorithm>
 
-#ifdef __PSP__
-#include <pspkernel.h>
-#include <pspdisplay.h>
-#include <pspgu.h>
-#include <pspgum.h>
-#endif
+// Prototype projection constants
+static const float YT = 12.0f;
+static const float YH = 222.0f;
+static const float SCR_H = 272.0f;
+static const float CX = 240.0f;
+static const float LW = 33.0f;
+static const float K = 2.6f;
+static const float SMIN = 1.0f / (1.0f + K);
+static const float SB = SMIN + (SCR_H - YT) / (YH - YT) * (1.0f - SMIN);
 
-#define BUF_WIDTH 512
-#define SCR_WIDTH 480
-#define SCR_HEIGHT 272
-#define FRAME_SIZE (BUF_WIDTH * SCR_HEIGHT * 4)
-
-#define Y_TOP 34.0f
-#define Y_STRIKE 224.0f
-#define X_CENTER 240.0f
-#define WIDTH_TOP 120.0f
-#define WIDTH_BOTTOM 210.0f
-
-#ifdef __PSP__
-static unsigned int __attribute__((aligned(16))) dlist[262144];
-
-struct VertexColor2D {
-    unsigned int color;
-    short x, y, z;
-};
-
-struct VertexTex2D {
-    short u, v;
-    unsigned int color;
-    short x, y, z;
-};
-#endif
-
-HighwayRenderer::HighwayRenderer()
-    : m_draw_buffer(nullptr)
-    , m_disp_buffer(reinterpret_cast<void*>(FRAME_SIZE))
-    , m_depth_buffer(reinterpret_cast<void*>(FRAME_SIZE * 2))
-    , m_font_texture(nullptr)
-{
-    for (int i = 0; i < MAX_SPARKS; ++i) {
-        m_sparks[i].timer = 0.0f;
-    }
+HighwayRenderer::HighwayRenderer() {
 }
 
 HighwayRenderer::~HighwayRenderer() {
-    shutdown();
 }
 
-void HighwayRenderer::initFontTexture() {
-    // 128 characters: 16 columns x 8 rows of 8x8 glyphs -> 128 x 64 pixels
-    size_t tex_bytes = 128 * 64 * sizeof(uint32_t);
-    m_font_texture = std::malloc(tex_bytes);
-    if (!m_font_texture) return;
+float HighwayRenderer::getScale(float d) const {
+    return (d >= 0.0f) ? (1.0f / (1.0f + K * d)) : (1.0f - K * d);
+}
 
-    uint32_t* pixels = reinterpret_cast<uint32_t*>(m_font_texture);
-    std::memset(pixels, 0, tex_bytes);
+float HighwayRenderer::getY(float scale) const {
+    return YT + (YH - YT) * (scale - SMIN) / (1.0f - SMIN);
+}
 
-    for (int ch = 0; ch < 128; ++ch) {
-        int col = ch % 16;
-        int row = ch / 16;
-        int bx = col * 8;
-        int by = row * 8;
+float HighwayRenderer::getLaneX(int lane, float scale) const {
+    return CX + (lane - 2) * LW * scale;
+}
 
-        for (int r = 0; r < 8; ++r) {
-            unsigned char b = font8x8_basic[ch][r];
-            for (int c = 0; c < 8; ++c) {
-                bool on = (b & (1 << c)) != 0;
-                pixels[(by + r) * 128 + (bx + c)] = on ? COLOR_WHITE : 0x00000000;
+float HighwayRenderer::getHighwayHalfWidth(float scale) const {
+    return (2.5f * LW + 5.0f) * scale;
+}
+
+void HighwayRenderer::triggerHitFX(int lane, int streak) {
+    if (lane < 0 || lane >= 5) return;
+
+    HitRing ring;
+    ring.lane = lane;
+    ring.timer = 1.0f;
+    m_rings.push_back(ring);
+
+    // Particle sparks
+    int count = 6 + std::min(10, streak / 6);
+    float lx = getLaneX(lane, 1.0f);
+    unsigned int col = Renderer::getLaneColor(lane);
+
+    for (int i = 0; i < count; ++i) {
+        SparkParticle p;
+        p.x = lx;
+        p.y = YH;
+        p.vx = ((std::rand() % 100) / 50.0f - 1.0f) * 60.0f;
+        p.vy = -30.0f - ((std::rand() % 100) / 100.0f) * 80.0f;
+        p.life = 1.0f;
+        p.color = col;
+        m_sparks.push_back(p);
+    }
+}
+
+void HighwayRenderer::update(float dt) {
+    // Rings
+    for (size_t i = 0; i < m_rings.size(); ) {
+        m_rings[i].timer -= dt * 4.0f;
+        if (m_rings[i].timer <= 0.0f) {
+            m_rings.erase(m_rings.begin() + i);
+        } else {
+            ++i;
+        }
+    }
+
+    // Sparks
+    for (size_t i = 0; i < m_sparks.size(); ) {
+        m_sparks[i].x += m_sparks[i].vx * dt;
+        m_sparks[i].y += m_sparks[i].vy * dt;
+        m_sparks[i].vy += 220.0f * dt; // gravity
+        m_sparks[i].life -= dt * 2.5f;
+        if (m_sparks[i].life <= 0.0f) {
+            m_sparks.erase(m_sparks.begin() + i);
+        } else {
+            ++i;
+        }
+    }
+}
+
+void HighwayRenderer::renderHighwayBase(double current_time, double travel_time, uint32_t held_frets_mask, bool star_active) {
+    (void)current_time;
+    (void)travel_time;
+
+    float hw_top = getHighwayHalfWidth(SMIN);
+    float hw_bot = getHighwayHalfWidth(SB);
+
+    // Highway bed
+    unsigned int bed_col = COLOR_RGBA(9, 8, 16, 215);
+    g_renderer.drawQuad(static_cast<int>(CX - hw_top), static_cast<int>(YT),
+                        static_cast<int>(CX + hw_top), static_cast<int>(YT),
+                        static_cast<int>(CX + hw_bot), static_cast<int>(SCR_H),
+                        static_cast<int>(CX - hw_bot), static_cast<int>(SCR_H),
+                        bed_col);
+
+    // Pressed lane glow bands
+    for (int i = 0; i < 5; ++i) {
+        if (held_frets_mask & (1u << i)) {
+            float x0_top = getLaneX(i, SMIN) - 0.5f * LW * SMIN;
+            float x1_top = getLaneX(i, SMIN) + 0.5f * LW * SMIN;
+            float x0_bot = getLaneX(i, SB) - 0.5f * LW * SB;
+            float x1_bot = getLaneX(i, SB) + 0.5f * LW * SB;
+
+            unsigned int col = (Renderer::getLaneColor(i) & 0x00FFFFFF) | 0x40000000;
+            g_renderer.drawQuad(static_cast<int>(x0_top), static_cast<int>(YT + 20),
+                                static_cast<int>(x1_top), static_cast<int>(YT + 20),
+                                static_cast<int>(x1_bot), static_cast<int>(YH),
+                                static_cast<int>(x0_bot), static_cast<int>(YH),
+                                col);
+        }
+    }
+
+    // Lane dividers
+    for (int i = 1; i < 5; ++i) {
+        float x_top = getLaneX(i, SMIN) - 0.5f * LW * SMIN;
+        float x_bot = getLaneX(i, SB) - 0.5f * LW * SB;
+        g_renderer.drawLine(static_cast<int>(x_top), static_cast<int>(YT),
+                            static_cast<int>(x_bot), static_cast<int>(SCR_H),
+                            COLOR_RGBA(255, 255, 255, 25));
+    }
+
+    // Side rails
+    unsigned int rail_col = star_active ? COLOR_CYAN : COLOR_RGBA(170, 160, 210, 180);
+    g_renderer.drawLine(static_cast<int>(CX - hw_top), static_cast<int>(YT),
+                        static_cast<int>(CX - hw_bot), static_cast<int>(SCR_H),
+                        rail_col);
+    g_renderer.drawLine(static_cast<int>(CX + hw_top), static_cast<int>(YT),
+                        static_cast<int>(CX + hw_bot), static_cast<int>(SCR_H),
+                        rail_col);
+
+    // Hit strikeline
+    float hw_strike = getHighwayHalfWidth(1.0f);
+    g_renderer.drawLine(static_cast<int>(CX - hw_strike), static_cast<int>(YH),
+                        static_cast<int>(CX + hw_strike), static_cast<int>(YH),
+                        COLOR_RGBA(255, 255, 255, 60));
+}
+
+void HighwayRenderer::renderNotes(const ChartTrack& track, double current_time, double travel_time) {
+    if (travel_time <= 0.0) travel_time = 1.7;
+
+    // 1. Sustain tails first
+    for (const auto& note : track.notes) {
+        if (note.duration_seconds <= 0.05) continue;
+
+        double d_start = (note.time_seconds - current_time) / travel_time;
+        double d_end = (note.time_seconds + note.duration_seconds - current_time) / travel_time;
+
+        if (d_end < -0.1 || d_start > 1.05) continue;
+
+        float ds = std::max(0.0f, static_cast<float>(d_start));
+        float de = std::min(1.0f, static_cast<float>(d_end));
+        if (de <= ds) continue;
+
+        float s1 = getScale(ds);
+        float s2 = getScale(de);
+        float y1 = getY(s1);
+        float y2 = getY(s2);
+
+        if (note.lane >= 0 && note.lane < 5) {
+            float x1 = getLaneX(note.lane, s1);
+            float x2 = getLaneX(note.lane, s2);
+            float w1 = 3.5f * s1;
+            float w2 = 3.5f * s2;
+
+            unsigned int col = Renderer::getLaneColor(note.lane);
+            unsigned int tail_col = (col & 0x00FFFFFF) | 0x90000000;
+
+            g_renderer.drawQuad(static_cast<int>(x1 - w1), static_cast<int>(y1),
+                                static_cast<int>(x1 + w1), static_cast<int>(y1),
+                                static_cast<int>(x2 + w2), static_cast<int>(y2),
+                                static_cast<int>(x2 - w2), static_cast<int>(y2),
+                                tail_col);
+
+            // Center glow line
+            g_renderer.drawLine(static_cast<int>(x1), static_cast<int>(y1),
+                                static_cast<int>(x2), static_cast<int>(y2),
+                                COLOR_RGBA(255, 255, 255, 180));
+        }
+    }
+
+    // 2. Note gems (rendered from horizon to strikeline)
+    for (auto it = track.notes.rbegin(); it != track.notes.rend(); ++it) {
+        const auto& note = *it;
+        if (note.hit) continue;
+
+        double d = (note.time_seconds - current_time) / travel_time;
+        if (d < -0.2 || d > 1.02) continue;
+
+        float s = getScale(static_cast<float>(d));
+        float y = getY(s);
+        if (y < YT || y > SCR_H + 10) continue;
+
+        if (note.lane == LANE_OPEN) {
+            // Open strum purple bar across all lanes
+            float hw = getHighwayHalfWidth(s) * 0.92f;
+            int bar_h = std::max(3, static_cast<int>(6.0f * s));
+            g_renderer.drawRoundedRect(static_cast<int>(CX - hw), static_cast<int>(y - bar_h / 2),
+                                       static_cast<int>(hw * 2), bar_h, 2,
+                                       COLOR_LANE_OPEN, COLOR_WHITE);
+        } else if (note.lane >= 0 && note.lane < 5) {
+            float x = getLaneX(note.lane, s);
+            float rx = 13.0f * s;
+            float ry = 8.6f * s;
+
+            unsigned int col = note.missed ? COLOR_GRAY : Renderer::getLaneColor(note.lane);
+
+            // Dark outer rim
+            g_renderer.drawEllipse(static_cast<int>(x), static_cast<int>(y),
+                                   static_cast<int>(rx + 2.0f * s), static_cast<int>(ry + 2.0f * s),
+                                   COLOR_RGBA(6, 5, 10, 255), true);
+
+            // Colored body
+            g_renderer.drawEllipse(static_cast<int>(x), static_cast<int>(y),
+                                   static_cast<int>(rx), static_cast<int>(ry),
+                                   col, true);
+
+            // 3D reflection highlight core
+            if (note.is_hopo) {
+                // HOPO: white center core
+                g_renderer.drawEllipse(static_cast<int>(x), static_cast<int>(y),
+                                       static_cast<int>(rx * 0.55f), static_cast<int>(ry * 0.55f),
+                                       COLOR_WHITE, true);
+            } else if (note.is_tap) {
+                // Tap: translucent center
+                g_renderer.drawEllipse(static_cast<int>(x), static_cast<int>(y),
+                                       static_cast<int>(rx * 0.6f), static_cast<int>(ry * 0.6f),
+                                       COLOR_RGBA(255, 255, 255, 180), true);
+            } else {
+                // Strum note: top shine specular reflection
+                g_renderer.drawEllipse(static_cast<int>(x), static_cast<int>(y - 0.5f * s),
+                                       static_cast<int>(rx * 0.5f), static_cast<int>(ry * 0.45f),
+                                       COLOR_RGBA(255, 255, 255, 220), true);
             }
         }
     }
-
-#ifdef __PSP__
-    sceKernelDcacheWritebackAll();
-#endif
-}
-
-bool HighwayRenderer::init() {
-    initFontTexture();
-
-#ifdef __PSP__
-    sceGuInit();
-    sceGuStart(GU_DIRECT, dlist);
-    sceGuDrawBuffer(GU_PSM_8888, m_draw_buffer, BUF_WIDTH);
-    sceGuDispBuffer(SCR_WIDTH, SCR_HEIGHT, m_disp_buffer, BUF_WIDTH);
-    sceGuDepthBuffer(m_depth_buffer, BUF_WIDTH);
-    sceGuOffset(2048 - (SCR_WIDTH / 2), 2048 - (SCR_HEIGHT / 2));
-    sceGuViewport(2048, 2048, SCR_WIDTH, SCR_HEIGHT);
-    sceGuDepthRange(65535, 0);
-    sceGuScissor(0, 0, SCR_WIDTH, SCR_HEIGHT);
-    sceGuEnable(GU_SCISSOR_TEST);
-    sceGuAlphaFunc(GU_GREATER, 0, 0xFF);
-    sceGuEnable(GU_ALPHA_TEST);
-    sceGuBlendFunc(GU_ADD, GU_SRC_ALPHA, GU_ONE_MINUS_SRC_ALPHA, 0, 0);
-    sceGuEnable(GU_BLEND);
-    sceGuShadeModel(GU_SMOOTH);
-    sceGuFinish();
-    sceGuSync(GU_SYNC_FINISH, GU_SYNC_WHAT_DONE);
-
-    sceDisplayWaitVblankStart();
-    sceGuDisplay(GU_TRUE);
-#endif
-
-    return true;
-}
-
-void HighwayRenderer::beginFrame() {
-#ifdef __PSP__
-    sceGuStart(GU_DIRECT, dlist);
-    sceGuClearColor(COLOR_RGBA(12, 12, 16, 255));
-    sceGuClearDepth(0);
-    sceGuClear(GU_COLOR_BUFFER_BIT | GU_DEPTH_BUFFER_BIT);
-#endif
-    updateSparks(1.0f / 60.0f);
-}
-
-void HighwayRenderer::endFrame() {
-#ifdef __PSP__
-    sceGuFinish();
-    sceGuSync(GU_SYNC_FINISH, GU_SYNC_WHAT_DONE);
-    sceDisplayWaitVblankStart();
-    m_draw_buffer = sceGuSwapBuffers();
-#endif
-}
-
-void HighwayRenderer::shutdown() {
-#ifdef __PSP__
-    sceGuTerm();
-#endif
-    if (m_font_texture) {
-        std::free(m_font_texture);
-        m_font_texture = nullptr;
-    }
-}
-
-float HighwayRenderer::getHighwayWidthAt(float y) const {
-    float t = (y - Y_TOP) / (Y_STRIKE - Y_TOP);
-    if (t < 0.0f) t = 0.0f;
-    return WIDTH_TOP + t * (WIDTH_BOTTOM - WIDTH_TOP);
-}
-
-float HighwayRenderer::getLaneCenterXAt(int lane, float y) const {
-    float hw = getHighwayWidthAt(y);
-    float left = X_CENTER - hw * 0.5f;
-    float lane_width = hw / 5.0f;
-    return left + (lane + 0.5f) * lane_width;
-}
-
-float HighwayRenderer::timeToY(double note_time, double current_time) const {
-    const double lookahead = 2.0;
-    double dt = note_time - current_time;
-    float t = static_cast<float>(dt / lookahead);
-    return Y_STRIKE - t * (Y_STRIKE - Y_TOP);
-}
-
-void HighwayRenderer::drawRect(int x, int y, int w, int h, unsigned int color) {
-#ifdef __PSP__
-    sceGuDisable(GU_TEXTURE_2D);
-    VertexColor2D* v = reinterpret_cast<VertexColor2D*>(sceGuGetMemory(2 * sizeof(VertexColor2D)));
-    if (!v) return;
-    v[0].color = color; v[0].x = x;     v[0].y = y;     v[0].z = 0;
-    v[1].color = color; v[1].x = x + w; v[1].y = y + h; v[1].z = 0;
-    sceGuDrawArray(GU_SPRITES, GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, nullptr, v);
-#else
-    (void)x; (void)y; (void)w; (void)h; (void)color;
-#endif
-}
-
-void HighwayRenderer::drawRectOutline(int x, int y, int w, int h, unsigned int color) {
-    drawLine(x, y, x + w, y, color);
-    drawLine(x + w, y, x + w, y + h, color);
-    drawLine(x + w, y + h, x, y + h, color);
-    drawLine(x, y + h, x, y, color);
-}
-
-void HighwayRenderer::drawLine(int x1, int y1, int x2, int y2, unsigned int color) {
-#ifdef __PSP__
-    sceGuDisable(GU_TEXTURE_2D);
-    VertexColor2D* v = reinterpret_cast<VertexColor2D*>(sceGuGetMemory(2 * sizeof(VertexColor2D)));
-    if (!v) return;
-    v[0].color = color; v[0].x = x1; v[0].y = y1; v[0].z = 0;
-    v[1].color = color; v[1].x = x2; v[1].y = y2; v[1].z = 0;
-    sceGuDrawArray(GU_LINES, GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2, nullptr, v);
-#else
-    (void)x1; (void)y1; (void)x2; (void)y2; (void)color;
-#endif
-}
-
-void HighwayRenderer::drawQuad(int x1, int y1, int x2, int y2, int x3, int y3, int x4, int y4, unsigned int color) {
-#ifdef __PSP__
-    sceGuDisable(GU_TEXTURE_2D);
-    // Draw quad as two triangles
-    VertexColor2D* v = reinterpret_cast<VertexColor2D*>(sceGuGetMemory(6 * sizeof(VertexColor2D)));
-    if (!v) return;
-    // Tri 1: 1, 2, 3
-    v[0].color = color; v[0].x = x1; v[0].y = y1; v[0].z = 0;
-    v[1].color = color; v[1].x = x2; v[1].y = y2; v[1].z = 0;
-    v[2].color = color; v[2].x = x3; v[2].y = y3; v[2].z = 0;
-    // Tri 2: 1, 3, 4
-    v[3].color = color; v[3].x = x1; v[3].y = y1; v[3].z = 0;
-    v[4].color = color; v[4].x = x3; v[4].y = y3; v[4].z = 0;
-    v[5].color = color; v[5].x = x4; v[5].y = y4; v[5].z = 0;
-    sceGuDrawArray(GU_TRIANGLES, GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 6, nullptr, v);
-#else
-    (void)x1; (void)y1; (void)x2; (void)y2; (void)x3; (void)y3; (void)x4; (void)y4; (void)color;
-#endif
-}
-
-void HighwayRenderer::drawText(int x, int y, const std::string& text, unsigned int color, int scale) {
-    if (text.empty() || !m_font_texture) return;
-    if (scale <= 0) scale = 1;
-
-#ifdef __PSP__
-    sceGuEnable(GU_TEXTURE_2D);
-    sceGuTexMode(GU_PSM_8888, 0, 0, 0);
-    sceGuTexImage(0, 128, 64, 128, m_font_texture);
-    sceGuTexFunc(GU_TFX_MODULATE, GU_TCC_RGBA);
-    sceGuTexFilter(GU_NEAREST, GU_NEAREST);
-
-    size_t len = text.size();
-    VertexTex2D* v = reinterpret_cast<VertexTex2D*>(sceGuGetMemory(2 * len * sizeof(VertexTex2D)));
-    if (!v) return;
-
-    int cur_x = x;
-    int cur_y = y;
-    int count = 0;
-
-    for (size_t i = 0; i < len; ++i) {
-        char ch = text[i];
-        if (ch == '\n') {
-            cur_x = x;
-            cur_y += 10 * scale;
-            continue;
-        }
-        if (ch < 0 || ch >= 128) ch = '?';
-
-        int col = ch % 16;
-        int row = ch / 16;
-        short u0 = col * 8;
-        short v0 = row * 8;
-
-        v[count * 2].u = u0;
-        v[count * 2].v = v0;
-        v[count * 2].color = color;
-        v[count * 2].x = cur_x;
-        v[count * 2].y = cur_y;
-        v[count * 2].z = 0;
-
-        v[count * 2 + 1].u = u0 + 8;
-        v[count * 2 + 1].v = v0 + 8;
-        v[count * 2 + 1].color = color;
-        v[count * 2 + 1].x = cur_x + 8 * scale;
-        v[count * 2 + 1].y = cur_y + 8 * scale;
-        v[count * 2 + 1].z = 0;
-
-        cur_x += 8 * scale;
-        count++;
-    }
-
-    if (count > 0) {
-        sceGuDrawArray(GU_SPRITES, GU_TEXTURE_16BIT | GU_COLOR_8888 | GU_VERTEX_16BIT | GU_TRANSFORM_2D, 2 * count, nullptr, v);
-    }
-#else
-    (void)x; (void)y; (void)color; (void)scale;
-#endif
-}
-
-void HighwayRenderer::triggerHitSpark(int lane) {
-    if (lane < 0 || lane >= 5) return;
-    for (int i = 0; i < MAX_SPARKS; ++i) {
-        if (m_sparks[i].timer <= 0.0f) {
-            m_sparks[i].x = getLaneCenterXAt(lane, Y_STRIKE);
-            m_sparks[i].y = Y_STRIKE;
-            m_sparks[i].timer = 0.2f; // 200ms duration
-            static const unsigned int colors[] = {
-                COLOR_FRET_GREEN, COLOR_FRET_RED, COLOR_FRET_YELLOW,
-                COLOR_FRET_BLUE, COLOR_FRET_ORANGE
-            };
-            m_sparks[i].color = colors[lane];
-            break;
-        }
-    }
-}
-
-void HighwayRenderer::updateSparks(float dt) {
-    for (int i = 0; i < MAX_SPARKS; ++i) {
-        if (m_sparks[i].timer > 0.0f) {
-            m_sparks[i].timer -= dt;
-            if (m_sparks[i].timer < 0.0f) m_sparks[i].timer = 0.0f;
-        }
-    }
-}
-
-void HighwayRenderer::renderHighway(double current_time) {
-    (void)current_time;
-
-    // Highway roadbed (perspective trapezoid)
-    float x1 = X_CENTER - WIDTH_TOP * 0.5f;
-    float y1 = Y_TOP;
-    float x2 = X_CENTER + WIDTH_TOP * 0.5f;
-    float y2 = Y_TOP;
-    float x3 = X_CENTER + WIDTH_BOTTOM * 0.5f;
-    float y3 = Y_STRIKE + 14.0f;
-    float x4 = X_CENTER - WIDTH_BOTTOM * 0.5f;
-    float y4 = Y_STRIKE + 14.0f;
-
-    // Dark highway body
-    drawQuad(x1, y1, x2, y2, x3, y3, x4, y4, COLOR_RGBA(18, 18, 24, 230));
-
-    // Outer rails (Left and Right)
-    drawLine(x1, y1, x4, y4, COLOR_RGBA(200, 200, 220, 255));
-    drawLine(x1 - 1, y1, x4 - 2, y4, COLOR_RGBA(80, 80, 100, 200));
-    drawLine(x2, y2, x3, y3, COLOR_RGBA(200, 200, 220, 255));
-    drawLine(x2 + 1, y2, x3 + 2, y3, COLOR_RGBA(80, 80, 100, 200));
-
-    // 4 Lane Dividers
-    for (int lane = 1; lane < 5; ++lane) {
-        float lx_top = x1 + lane * (WIDTH_TOP / 5.0f);
-        float lx_bot = x4 + lane * (WIDTH_BOTTOM / 5.0f);
-        drawLine(lx_top, y1, lx_bot, y4, COLOR_RGBA(60, 60, 75, 180));
-    }
-
-    // Strikeline bar
-    float sl_w = WIDTH_BOTTOM + 6.0f;
-    drawRect(X_CENTER - sl_w * 0.5f, Y_STRIKE - 2, sl_w, 4, COLOR_RGBA(240, 240, 255, 240));
-    drawRect(X_CENTER - sl_w * 0.5f, Y_STRIKE - 4, sl_w, 8, COLOR_RGBA(100, 140, 255, 80));
 }
 
 void HighwayRenderer::renderReceptors(uint32_t held_frets_mask) {
-    static const unsigned int fret_colors[] = {
-        COLOR_FRET_GREEN, COLOR_FRET_RED, COLOR_FRET_YELLOW,
-        COLOR_FRET_BLUE, COLOR_FRET_ORANGE
-    };
+    for (int i = 0; i < 5; ++i) {
+        float x = getLaneX(i, 1.0f);
+        bool lit = (held_frets_mask & (1u << i)) != 0;
+        unsigned int col = Renderer::getLaneColor(i);
 
-    float receptor_w = (WIDTH_BOTTOM / 5.0f) * 0.72f;
-    float receptor_h = 10.0f;
+        // Fret outer bezel
+        g_renderer.drawEllipse(static_cast<int>(x), static_cast<int>(YH), 17, 12, COLOR_RGBA(5, 4, 8, 255), true);
 
-    for (int lane = 0; lane < 5; ++lane) {
-        float cx = getLaneCenterXAt(lane, Y_STRIKE);
-        bool is_held = (held_frets_mask & (1u << lane)) != 0;
+        // Inner receptor body
+        unsigned int body_col = lit ? col : ((col & 0x00FFFFFF) | 0x65000000);
+        g_renderer.drawEllipse(static_cast<int>(x), static_cast<int>(YH), 14, 9, body_col, true);
 
-        int rx = static_cast<int>(cx - receptor_w * 0.5f);
-        int ry = static_cast<int>(Y_STRIKE - receptor_h * 0.5f);
-
-        if (is_held) {
-            // Bright filled receptor when held
-            drawRect(rx - 2, ry - 2, receptor_w + 4, receptor_h + 4, fret_colors[lane]);
-            drawRect(rx, ry, receptor_w, receptor_h, COLOR_WHITE);
-        } else {
-            // Target receptor ring
-            drawRectOutline(rx, ry, receptor_w, receptor_h, fret_colors[lane]);
-            drawRectOutline(rx + 2, ry + 2, receptor_w - 4, receptor_h - 4, COLOR_RGBA(100, 100, 100, 180));
-        }
-    }
-
-    // Render active hit sparks
-    for (int i = 0; i < MAX_SPARKS; ++i) {
-        if (m_sparks[i].timer > 0.0f) {
-            float progress = m_sparks[i].timer / 0.2f;
-            int spark_sz = static_cast<int>((1.0f - progress) * 20.0f + 8.0f);
-            int sx = static_cast<int>(m_sparks[i].x - spark_sz * 0.5f);
-            int sy = static_cast<int>(m_sparks[i].y - spark_sz * 0.5f);
-            unsigned int alpha = static_cast<unsigned int>(progress * 255);
-            unsigned int spark_col = (m_sparks[i].color & 0x00FFFFFF) | (alpha << 24);
-            drawRectOutline(sx, sy, spark_sz, spark_sz, spark_col);
-            drawRect(sx + 2, sy + 2, spark_sz - 4, spark_sz - 4, COLOR_RGBA(255, 255, 255, alpha));
-        }
+        // Top specular highlight
+        unsigned int hi_col = lit ? COLOR_WHITE : COLOR_RGBA(255, 255, 255, 80);
+        g_renderer.drawEllipse(static_cast<int>(x), static_cast<int>(YH - 1), 7, 4, hi_col, true);
     }
 }
 
-void HighwayRenderer::renderNotes(const ChartTrack& track, double current_time) {
-    const double lookahead = 2.0;
-    double start_window = current_time - 0.25;
-    double end_window = current_time + lookahead;
-
-    static const unsigned int note_colors[] = {
-        COLOR_FRET_GREEN, COLOR_FRET_RED, COLOR_FRET_YELLOW,
-        COLOR_FRET_BLUE, COLOR_FRET_ORANGE
-    };
-
-    // First pass: render sustain tails (behind note heads)
-    for (const auto& note : track.notes) {
-        if (note.duration_seconds <= 0.0) continue;
-        double note_start = note.time_seconds;
-        double note_end = note.time_seconds + note.duration_seconds;
-
-        // Skip if outside visible window
-        if (note_end < start_window || note_start > end_window) continue;
-
-        double clamp_start = std::max(note_start, current_time);
-        double clamp_end = std::min(note_end, end_window);
-        if (clamp_start >= clamp_end) continue;
-
-        float p_start = static_cast<float>((clamp_start - current_time) / lookahead);
-        float p_end = static_cast<float>((clamp_end - current_time) / lookahead);
-        float y_head = Y_STRIKE - p_start * (Y_STRIKE - Y_TOP);
-        float y_tail = Y_STRIKE - p_end * (Y_STRIKE - Y_TOP);
-
-        unsigned int tail_color = (note.lane >= 0 && note.lane < 5) ? note_colors[note.lane] : COLOR_FRET_OPEN;
-        // Semi-transparent tail
-        tail_color = (tail_color & 0x00FFFFFF) | 0xAA000000;
-
-        if (note.lane == LANE_OPEN) {
-            // Open note sustain strip across all lanes
-            float w_head = getHighwayWidthAt(y_head) * 0.9f;
-            float w_tail = getHighwayWidthAt(y_tail) * 0.9f;
-            drawQuad(X_CENTER - w_tail * 0.5f, y_tail,
-                     X_CENTER + w_tail * 0.5f, y_tail,
-                     X_CENTER + w_head * 0.5f, y_head,
-                     X_CENTER - w_head * 0.5f, y_head, tail_color);
-        } else if (note.lane >= 0 && note.lane < 5) {
-            float x_head = getLaneCenterXAt(note.lane, y_head);
-            float x_tail = getLaneCenterXAt(note.lane, y_tail);
-            float tail_w_head = (getHighwayWidthAt(y_head) / 5.0f) * 0.35f;
-            float tail_w_tail = (getHighwayWidthAt(y_tail) / 5.0f) * 0.35f;
-
-            drawQuad(x_tail - tail_w_tail * 0.5f, y_tail,
-                     x_tail + tail_w_tail * 0.5f, y_tail,
-                     x_head + tail_w_head * 0.5f, y_head,
-                     x_head - tail_w_head * 0.5f, y_head, tail_color);
-        }
+void HighwayRenderer::renderEffects() {
+    // Hit rings
+    for (const auto& r : m_rings) {
+        float x = getLaneX(r.lane, 1.0f);
+        float progress = 1.0f - r.timer;
+        int rx = static_cast<int>(15.0f + progress * 16.0f);
+        int ry = static_cast<int>(10.0f + progress * 9.0f);
+        unsigned int col = (Renderer::getLaneColor(r.lane) & 0x00FFFFFF) | static_cast<unsigned int>(r.timer * 200.0f) << 24;
+        g_renderer.drawEllipse(static_cast<int>(x), static_cast<int>(YH), rx, ry, col, false);
     }
 
-    // Second pass: render note gems
-    for (const auto& note : track.notes) {
-        if (note.hit) continue; // Don't draw hit notes
-        if (note.time_seconds < start_window || note.time_seconds > end_window) continue;
-
-        float p = static_cast<float>((note.time_seconds - current_time) / lookahead);
-        float y = Y_STRIKE - p * (Y_STRIKE - Y_TOP);
-
-        if (note.lane == LANE_OPEN) {
-            // Open note: horizontal purple bar spanning all 5 lanes
-            float hw = getHighwayWidthAt(y) * 0.95f;
-            float bar_h = 7.0f + (1.0f - p) * 4.0f;
-            int bx = static_cast<int>(X_CENTER - hw * 0.5f);
-            int by = static_cast<int>(y - bar_h * 0.5f);
-
-            drawRect(bx, by, hw, bar_h, COLOR_FRET_OPEN);
-            drawRectOutline(bx, by, hw, bar_h, COLOR_WHITE);
-            // Inner glowing line
-            drawRect(bx + 4, by + 2, hw - 8, bar_h - 4, COLOR_RGBA(240, 160, 255, 255));
-        } else if (note.lane >= 0 && note.lane < 5) {
-            float cx = getLaneCenterXAt(note.lane, y);
-            float lane_w = getHighwayWidthAt(y) / 5.0f;
-            float note_w = lane_w * 0.78f;
-            float note_h = 6.0f + (1.0f - p) * 5.0f;
-
-            int nx = static_cast<int>(cx - note_w * 0.5f);
-            int ny = static_cast<int>(y - note_h * 0.5f);
-
-            unsigned int col = note_colors[note.lane];
-
-            // Outer gem body
-            drawRect(nx, ny, note_w, note_h, col);
-            drawRectOutline(nx, ny, note_w, note_h, COLOR_WHITE);
-
-            // HOPO or Tap styling
-            if (note.is_tap) {
-                // Translucent inner core
-                drawRect(nx + 3, ny + 2, note_w - 6, note_h - 4, COLOR_RGBA(255, 255, 255, 220));
-            } else if (note.is_hopo) {
-                // White circular/square core
-                drawRect(nx + 4, ny + 2, note_w - 8, note_h - 4, COLOR_WHITE);
-            } else {
-                // Strum note: dark inner core with colored reflection
-                drawRect(nx + 3, ny + 2, note_w - 6, note_h - 4, COLOR_RGBA(40, 40, 40, 255));
-                drawRect(nx + 5, ny + 2, note_w - 10, 2, COLOR_WHITE);
-            }
-        }
+    // Sparks
+    for (const auto& p : m_sparks) {
+        int a = static_cast<int>(p.life * 255.0f);
+        if (a > 255) a = 255;
+        if (a < 0) a = 0;
+        unsigned int c = (p.color & 0x00FFFFFF) | (a << 24);
+        g_renderer.drawRect(static_cast<int>(p.x - 1), static_cast<int>(p.y - 1), 2, 2, c);
     }
 }
 
-void HighwayRenderer::renderHUD(const ChartSong& song,
-                                const ChartTrack& track,
-                                double current_time,
-                                const GameplayStats& stats,
-                                bool is_paused) {
-    char buf[128];
+void HighwayRenderer::renderHUD(const ChartSong& song, const ChartTrack& track, double current_time, const GameSession& session) {
+    (void)track;
 
-    // --- TOP HEADER BAR ---
-    drawRect(0, 0, SCR_WIDTH, 26, COLOR_RGBA(16, 16, 22, 240));
-    drawLine(0, 26, SCR_WIDTH, 26, COLOR_RGBA(60, 60, 80, 255));
-
-    // Song Title & Artist
-    std::string title_str = song.name;
-    if (!song.artist.empty()) title_str += " - " + song.artist;
-    drawText(10, 4, title_str, COLOR_GOLD, 1);
-
-    // Current Section
-    std::string sec = song.getSectionAt(current_time);
-    if (!sec.empty()) {
-        std::snprintf(buf, sizeof(buf), "[%s]", sec.c_str());
-        drawText(10, 15, buf, COLOR_CYAN, 1);
-    } else {
-        std::snprintf(buf, sizeof(buf), "%s (%s)", track.difficulty.c_str(), track.instrument.c_str());
-        drawText(10, 15, buf, COLOR_GRAY, 1);
-    }
-
-    // Charter Name
-    if (!song.charter.empty()) {
-        std::snprintf(buf, sizeof(buf), "Chart: %s", song.charter.c_str());
-        drawText(290, 4, buf, COLOR_RGBA(200, 200, 200, 255), 1);
-    }
-
-    // BPM
-    double bpm = song.getBPMAt(current_time);
-    std::snprintf(buf, sizeof(buf), "%.1f BPM", bpm);
-    drawText(400, 15, buf, COLOR_WHITE, 1);
-
-    // --- LEFT SIDEBAR (Time & Progress) ---
-    drawRect(6, 36, 114, 184, COLOR_RGBA(16, 16, 24, 200));
-    drawRectOutline(6, 36, 114, 184, COLOR_RGBA(50, 50, 70, 220));
-
-    drawText(12, 44, "SONG TIME", COLOR_CYAN, 1);
-
-    int cur_m = static_cast<int>(current_time) / 60;
-    int cur_s = static_cast<int>(current_time) % 60;
-    int tot_m = static_cast<int>(song.total_duration_seconds) / 60;
-    int tot_s = static_cast<int>(song.total_duration_seconds) % 60;
-    std::snprintf(buf, sizeof(buf), "%02d:%02d / %02d:%02d", cur_m, cur_s, tot_m, tot_s);
-    drawText(12, 58, buf, COLOR_WHITE, 1);
-
-    // Progress bar
-    drawRect(12, 74, 100, 6, COLOR_RGBA(40, 40, 50, 255));
+    // 1. Top progress bar across entire screen
+    g_renderer.drawRect(0, 0, 480, 2, COLOR_RGBA(255, 255, 255, 20));
     if (song.total_duration_seconds > 0.0) {
-        float progress = static_cast<float>(current_time / song.total_duration_seconds);
-        if (progress > 1.0f) progress = 1.0f;
-        if (progress < 0.0f) progress = 0.0f;
-        drawRect(12, 74, static_cast<int>(progress * 100.0f), 6, COLOR_CYAN);
+        float prog = static_cast<float>(current_time / song.total_duration_seconds);
+        if (prog > 1.0f) prog = 1.0f;
+        if (prog < 0.0f) prog = 0.0f;
+        unsigned int prog_col = session.star_active ? COLOR_CYAN : COLOR_RGBA(170, 200, 255, 240);
+        g_renderer.drawRect(0, 0, static_cast<int>(480.0f * prog), 2, prog_col);
     }
 
-    // Mode badge
-    drawText(12, 92, "MODE", COLOR_CYAN, 1);
-    if (stats.autoplay) {
-        drawRect(12, 104, 98, 16, COLOR_RGBA(30, 90, 40, 240));
-        drawText(16, 108, "AUTOPLAY", COLOR_WHITE, 1);
-    } else {
-        drawRect(12, 104, 98, 16, COLOR_RGBA(90, 40, 30, 240));
-        drawText(16, 108, "MANUAL PLAY", COLOR_WHITE, 1);
+    // 2. Song title & artist at top left
+    g_renderer.drawText(10, 6, song.name, COLOR_WHITE, 1);
+    g_renderer.drawText(10, 16, song.artist, COLOR_GRAY, 1);
+
+    // 3. Score counter
+    g_renderer.drawTextRight(110, 32, "Score", COLOR_GRAY, 1);
+    char score_buf[32];
+    std::snprintf(score_buf, sizeof(score_buf), "%u", session.score);
+    g_renderer.drawTextRight(110, 44, score_buf, COLOR_WHITE, 2);
+
+    // 4. Circular Multiplier Orb on left (ox = 58, oy = 124, r = 26)
+    int ox = 58, oy = 124, oradius = 26;
+    g_renderer.drawCircle(ox, oy, oradius, COLOR_PANEL_BG, true);
+    g_renderer.drawCircle(ox, oy, oradius, COLOR_PANEL_BORDER, false);
+
+    // Progress arc
+    int step = session.streak % 10;
+    float arc_end = -1.5707963f + (step / 10.0f) * 6.2831853f;
+    if (session.multiplier >= 4) arc_end = 4.712389f;
+
+    unsigned int mult_col = session.star_active ? COLOR_CYAN :
+        (session.multiplier >= 4 ? COLOR_LANE_ORANGE :
+        (session.multiplier == 3 ? COLOR_LANE_YELLOW :
+        (session.multiplier == 2 ? COLOR_LANE_GREEN : COLOR_WHITE)));
+
+    g_renderer.drawArc(ox, oy, oradius - 2, -1.5707963f, arc_end, mult_col, 3);
+
+    char mult_buf[16];
+    std::snprintf(mult_buf, sizeof(mult_buf), "x%u", session.multiplier);
+    g_renderer.drawTextCentered(ox, oy - 4, mult_buf, mult_col, 2);
+
+    // 5. Streak counter
+    g_renderer.drawTextCentered(ox, 162, "Streak", COLOR_GRAY, 1);
+    char streak_buf[16];
+    std::snprintf(streak_buf, sizeof(streak_buf), "%u", session.streak);
+    g_renderer.drawTextCentered(ox, 174, streak_buf, COLOR_WHITE, 1);
+
+    // 6. Accuracy percentage
+    char acc_buf[32];
+    std::snprintf(acc_buf, sizeof(acc_buf), "%d%% accuracy", static_cast<int>(session.accuracy * 100.0));
+    g_renderer.drawText(10, 258, acc_buf, COLOR_GRAY, 1);
+
+    // 7. Rock Meter on right (mx = 438, my = 58, mh = 130, mw = 12)
+    int mx = 438, my = 58, mh = 130, mw = 12;
+    g_renderer.drawTextCentered(mx + mw / 2, 46, "Rock", COLOR_GRAY, 1);
+
+    // Red (bottom 33%), Yellow (middle 33%), Green (top 33%)
+    int third = mh / 3;
+    g_renderer.drawRect(mx, my, mw, third, COLOR_RGBA(53, 211, 106, 70));
+    g_renderer.drawRect(mx, my + third, mw, third, COLOR_RGBA(255, 210, 63, 70));
+    g_renderer.drawRect(mx, my + 2 * third, mw, third, COLOR_RGBA(255, 75, 75, 70));
+
+    // Active fill
+    int fill_h = static_cast<int>(mh * session.rock);
+    unsigned int active_col = (session.rock > 0.66f) ? COLOR_LANE_GREEN :
+                              ((session.rock > 0.33f) ? COLOR_LANE_YELLOW : COLOR_LANE_RED);
+    g_renderer.drawRect(mx, my + mh - fill_h, mw, fill_h, active_col);
+    g_renderer.drawRectOutline(mx, my, mw, mh, COLOR_RGBA(255, 255, 255, 70));
+
+    // Needle pointer
+    int py = my + mh - fill_h;
+    g_renderer.drawLine(mx - 6, py - 3, mx, py, COLOR_WHITE);
+    g_renderer.drawLine(mx - 6, py + 3, mx, py, COLOR_WHITE);
+    g_renderer.drawLine(mx - 6, py - 3, mx - 6, py + 3, COLOR_WHITE);
+
+    // 8. Star Power Meter (sx = 460)
+    int sx = 460;
+    g_renderer.drawTextCentered(sx + mw / 2, 46, "Star", COLOR_GRAY, 1);
+    g_renderer.drawRect(sx, my, mw, mh, COLOR_RGBA(61, 139, 255, 45));
+
+    int star_h = static_cast<int>(mh * session.star);
+    g_renderer.drawRect(sx, my + mh - star_h, mw, star_h, COLOR_CYAN);
+    // 50% marker line
+    g_renderer.drawLine(sx, my + mh / 2, sx + mw, my + mh / 2, COLOR_RGBA(255, 255, 255, 120));
+    g_renderer.drawRectOutline(sx, my, mw, mh, COLOR_RGBA(255, 255, 255, 70));
+
+    if (session.star_active) {
+        g_renderer.drawTextCentered(sx + mw / 2, my + mh + 4, "Active", COLOR_CYAN, 1);
+    } else if (session.star >= 0.5f) {
+        g_renderer.drawTextCentered(sx + mw / 2, my + mh + 4, "Ready", COLOR_WHITE, 1);
     }
 
-    // Track difficulty & instrument
-    drawText(12, 128, "DIFFICULTY", COLOR_CYAN, 1);
-    drawText(12, 140, track.difficulty, COLOR_GOLD, 1);
-    drawText(12, 152, track.instrument, COLOR_WHITE, 1);
-
-    // Controls summary in sidebar
-    drawText(12, 178, "SELECT: Auto", COLOR_GRAY, 1);
-    drawText(12, 192, "L/R: Seek", COLOR_GRAY, 1);
-    drawText(12, 206, "START: Pause", COLOR_GRAY, 1);
-
-    // --- RIGHT SIDEBAR (Score, Streak, Accuracy) ---
-    drawRect(360, 36, 114, 184, COLOR_RGBA(16, 16, 24, 200));
-    drawRectOutline(360, 36, 114, 184, COLOR_RGBA(50, 50, 70, 220));
-
-    drawText(366, 44, "SCORE", COLOR_GOLD, 1);
-    std::snprintf(buf, sizeof(buf), "%u", static_cast<unsigned int>(stats.score));
-    drawText(366, 56, buf, COLOR_WHITE, 2);
-
-    // Multiplier & Streak
-    drawText(366, 82, "MULTIPLIER", COLOR_CYAN, 1);
-    std::snprintf(buf, sizeof(buf), "x%u", static_cast<unsigned int>(stats.multiplier));
-    unsigned int mult_color = (stats.multiplier == 4) ? COLOR_GOLD :
-                              (stats.multiplier == 3) ? COLOR_FRET_BLUE :
-                              (stats.multiplier == 2) ? COLOR_FRET_YELLOW : COLOR_WHITE;
-    drawText(366, 94, buf, mult_color, 2);
-
-    std::snprintf(buf, sizeof(buf), "Streak: %u", static_cast<unsigned int>(stats.streak));
-    drawText(366, 116, buf, COLOR_WHITE, 1);
-    std::snprintf(buf, sizeof(buf), "Max:    %u", static_cast<unsigned int>(stats.max_streak));
-    drawText(366, 128, buf, COLOR_GRAY, 1);
-
-    // Accuracy
-    drawText(366, 148, "NOTES HIT", COLOR_CYAN, 1);
-    std::snprintf(buf, sizeof(buf), "Hit:  %u", static_cast<unsigned int>(stats.notes_hit));
-    drawText(366, 160, buf, COLOR_FRET_GREEN, 1);
-    std::snprintf(buf, sizeof(buf), "Miss: %u", static_cast<unsigned int>(stats.notes_missed));
-    drawText(366, 172, buf, stats.notes_missed > 0 ? COLOR_FRET_RED : COLOR_GRAY, 1);
-
-    uint32_t total_notes = stats.notes_hit + stats.notes_missed;
-    float acc = (total_notes > 0) ? (static_cast<float>(stats.notes_hit) / total_notes) * 100.0f : 100.0f;
-    std::snprintf(buf, sizeof(buf), "Acc:  %.1f%%", acc);
-    drawText(366, 186, buf, COLOR_WHITE, 1);
-
-    // --- BOTTOM STATUS BAR ---
-    drawRect(0, 248, SCR_WIDTH, 24, COLOR_RGBA(16, 16, 22, 240));
-    drawLine(0, 248, SCR_WIDTH, 248, COLOR_RGBA(60, 60, 80, 255));
-
-    if (is_paused) {
-        drawRect(140, 250, 200, 20, COLOR_RGBA(180, 30, 30, 220));
-        drawText(160, 256, "** PAUSED ** [START]", COLOR_WHITE, 1);
-    } else {
-        // Button mapping helper
-        drawText(20, 255, "LEFT:G | DOWN/UP:R | TRIANGLE:Y | CIRCLE:B | CROSS:O | SQ:Open", COLOR_RGBA(180, 180, 200, 255), 1);
+    // 9. Popups
+    if (session.pop.timer > 0.0f) {
+        g_renderer.drawTextCentered(static_cast<int>(CX), 170, session.pop.text, session.pop.color, 2);
+    }
+    if (session.mile.timer > 0.0f) {
+        g_renderer.drawTextCentered(static_cast<int>(CX), 110, session.mile.text, COLOR_WHITE, 1);
     }
 }
 
 void HighwayRenderer::render(const ChartSong& song,
                              const ChartTrack& track,
                              double current_time,
-                             const GameplayStats& stats,
-                             bool is_paused,
-                             uint32_t held_frets_mask) {
-    renderHighway(current_time);
+                             double travel_time,
+                             const GameSession& session,
+                             uint32_t held_frets_mask,
+                             bool is_paused) {
+    (void)is_paused;
+
+    // 1. Reactive Background
+    g_renderer.renderBackground(session.star_active);
+
+    // 2. Highway Base & Rails
+    renderHighwayBase(current_time, travel_time, held_frets_mask, session.star_active);
+
+    // 3. Notes & Sustains
+    renderNotes(track, current_time, travel_time);
+
+    // 4. Receptors at strikeline
     renderReceptors(held_frets_mask);
-    renderNotes(track, current_time);
-    renderHUD(song, track, current_time, stats, is_paused);
+
+    // 5. Hit Rings & Sparks
+    renderEffects();
+
+    // 6. In-Game HUD
+    renderHUD(song, track, current_time, session);
 }

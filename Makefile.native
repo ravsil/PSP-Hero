@@ -3,8 +3,8 @@ CXXFLAGS = -std=c++17 -Wall -Wextra -O2 -Isrc -Isrc/core
 
 all: test_parser
 
-test_parser: tools/test_parser.cpp src/core/chart_parser.cpp src/core/chart_parser.h
-	$(CXX) $(CXXFLAGS) tools/test_parser.cpp src/core/chart_parser.cpp -o test_parser
+test_parser: tools/test_parser.cpp src/core/chart_parser.cpp src/core/song_manager.cpp src/core/config.cpp
+	$(CXX) $(CXXFLAGS) tools/test_parser.cpp src/core/chart_parser.cpp src/core/song_manager.cpp src/core/config.cpp -o test_parser
 
 clean:
 	rm -f test_parser

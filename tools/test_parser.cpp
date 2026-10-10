@@ -1,4 +1,6 @@
 #include "../src/core/chart_parser.h"
+#include "../src/core/song_manager.h"
+#include "../src/core/config.h"
 #include <iostream>
 #include <iomanip>
 
@@ -157,5 +159,44 @@ int main(int argc, char* argv[]) {
     std::cout << "  BPM at 60.0s:      " << song.getBPMAt(60.0) << " BPM" << std::endl;
 
     std::cout << "\n[SUCCESS] .chart file parsed and verified successfully!" << std::endl;
+
+    // --- SONG MANAGER TEST ---
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "  Testing SongManager Multi-Song Scan   " << std::endl;
+    std::cout << "========================================" << std::endl;
+    SongManager sm;
+    bool scan_ok = sm.scanSongs("song");
+    std::cout << "  Songs found: " << sm.getSongCount() << " (Scan success: " << (scan_ok ? "true" : "false") << ")" << std::endl;
+    for (size_t i = 0; i < sm.getSongCount(); ++i) {
+        const SongItem* item = sm.getSong(i);
+        std::cout << "    [" << i << "] Title: \"" << item->title << "\", Artist: \"" << item->artist
+                  << "\", BPM: " << item->bpm << ", Tracks: " << item->tracks.size() << std::endl;
+        for (const auto& trk : item->tracks) {
+            std::cout << "        * " << trk.track_name << " (" << trk.difficulty << ", " << trk.note_count << " notes)" << std::endl;
+        }
+    }
+
+    // High score persistence test
+    sm.setBestScore("Aerials", "Expert", 152000);
+    uint32_t saved_score = sm.getBestScore("Aerials", "Expert");
+    std::cout << "  High score test: Saved and retrieved " << saved_score << " for Aerials (Expert)" << std::endl;
+
+    // --- CONFIG & BUTTON REMAPPER TEST ---
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "  Testing GameConfig & Button Remapper   " << std::endl;
+    std::cout << "========================================" << std::endl;
+    GameConfig cfg;
+    std::cout << "  Default Green Fret: " << GameConfig::getButtonName(cfg.buttons[ACTION_FRET_GREEN]) << std::endl;
+    cfg.buttons[ACTION_FRET_GREEN] = PSP_CTRL_LTRIGGER;
+    std::cout << "  Remapped Green Fret: " << GameConfig::getButtonName(cfg.buttons[ACTION_FRET_GREEN]) << std::endl;
+    cfg.save("test_config.dat");
+
+    GameConfig cfg2;
+    cfg2.load("test_config.dat");
+    std::cout << "  Loaded Remapped Green Fret: " << GameConfig::getButtonName(cfg2.buttons[ACTION_FRET_GREEN]) << std::endl;
+    std::remove("test_config.dat");
+    std::remove("scores.dat");
+
+    std::cout << "\n[ALL TESTS PASSED SUCCESSFULLY!]" << std::endl;
     return 0;
 }

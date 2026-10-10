@@ -1,6 +1,11 @@
 #include "chart_parser.h"
 #include "audio_player.h"
+#include "song_manager.h"
+#include "config.h"
+#include "renderer.h"
 #include "highway_renderer.h"
+#include "gameplay.h"
+#include "menu_screens.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -8,6 +13,7 @@
 #include <cmath>
 #include <vector>
 #include <string>
+#include <algorithm>
 
 #ifdef __PSP__
 #include <pspkernel.h>
@@ -15,8 +21,9 @@
 #include <pspdebug.h>
 #include <pspctrl.h>
 #include <psppower.h>
+#include <psprtc.h>
 
-PSP_MODULE_INFO("CloneHeroPSP", 0, 1, 0);
+PSP_MODULE_INFO("PSPHero", 0, 1, 0);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
 
 static int g_exit_requested = 0;
@@ -46,16 +53,16 @@ static int setupCallbacks() {
 static int g_exit_requested = 0;
 #endif
 
-// Search for a file across common PSP working directories
-static std::string findFilePath(const std::vector<std::string>& candidates) {
-    for (const auto& path : candidates) {
-        FILE* f = std::fopen(path.c_str(), "rb");
-        if (f) {
-            std::fclose(f);
-            return path;
-        }
-    }
-    return "";
+// High-precision clock in seconds
+static double getRealTimeSeconds() {
+#ifdef __PSP__
+    u64 tick;
+    sceRtcGetCurrentTick(&tick);
+    u32 resolution = sceRtcGetTickResolution();
+    return static_cast<double>(tick) / static_cast<double>(resolution);
+#else
+    return 0.0;
+#endif
 }
 
 int main(int argc, char* argv[]) {
@@ -65,103 +72,18 @@ int main(int argc, char* argv[]) {
     setupCallbacks();
     pspDebugScreenInit();
 
-    // Set PSP CPU clock to maximum 333MHz for smooth audio decoding and rendering
+    // Set PSP CPU clock to maximum 333MHz
     scePowerSetClockFrequency(333, 333, 166);
 
     sceCtrlSetSamplingCycle(0);
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
 #endif
 
-    // Locate chart file
-    std::vector<std::string> chart_candidates = {
-        "song/Aerials/notes.chart",
-        "song/notes.chart",
-        "notes.chart",
-        "ms0:/PSP/GAME/cloneHero/song/Aerials/notes.chart",
-        "ms0:/PSP/GAME/cloneHero/song/notes.chart",
-        "ms0:/PSP/GAME/cloneHero/notes.chart",
-        "./song/Aerials/notes.chart",
-        "./song/notes.chart"
-    };
-
-    std::string chart_path = findFilePath(chart_candidates);
-    if (chart_path.empty()) {
-#ifdef __PSP__
-        pspDebugScreenPrintf("========================================\n");
-        pspDebugScreenPrintf("  Clone Hero PSP - File Error           \n");
-        pspDebugScreenPrintf("========================================\n\n");
-        pspDebugScreenPrintf("Could not find 'notes.chart'!\n");
-        pspDebugScreenPrintf("Please place 'song/notes.chart' in the\n");
-        pspDebugScreenPrintf("game folder.\n\n");
-        pspDebugScreenPrintf("Press HOME to exit...\n");
-        while (!g_exit_requested) {
-            sceDisplayWaitVblankStart();
-        }
-        sceKernelExitGame();
-#endif
-        return 1;
-    }
-
-    ChartSong song;
-    if (!ChartParser::loadChartFile(chart_path, song)) {
-#ifdef __PSP__
-        pspDebugScreenPrintf("Error: Failed to parse %s\n", chart_path.c_str());
-        while (!g_exit_requested) { sceDisplayWaitVblankStart(); }
-        sceKernelExitGame();
-#endif
-        return 1;
-    }
-
-    // Load companion song.ini
-    std::vector<std::string> ini_candidates = {
-        "song/Aerials/song.ini",
-        "song/song.ini",
-        "song.ini",
-        "ms0:/PSP/GAME/cloneHero/song/Aerials/song.ini",
-        "ms0:/PSP/GAME/cloneHero/song/song.ini",
-        "ms0:/PSP/GAME/cloneHero/song.ini"
-    };
-    std::string ini_path = findFilePath(ini_candidates);
-    if (!ini_path.empty()) {
-        ChartParser::loadSongIni(ini_path, song);
-    }
-
-    // Select default track
-    const ChartTrack* base_track = song.getDefaultTrack();
-    if (!base_track) {
-#ifdef __PSP__
-        pspDebugScreenPrintf("Error: No note tracks found in chart file.\n");
-        while (!g_exit_requested) { sceDisplayWaitVblankStart(); }
-        sceKernelExitGame();
-#endif
-        return 1;
-    }
-
-    // Make a mutable copy of the active track to track hit/miss states during play
-    ChartTrack active_track = *base_track;
-
-    // Locate audio file
-    std::vector<std::string> audio_candidates = {
-        "song/Aerials/guitar.opus",
-        "song/guitar.opus",
-        "guitar.opus",
-        "ms0:/PSP/GAME/cloneHero/song/Aerials/guitar.opus",
-        "ms0:/PSP/GAME/cloneHero/song/guitar.opus",
-        "ms0:/PSP/GAME/cloneHero/guitar.opus"
-    };
-    std::string audio_path = findFilePath(audio_candidates);
-
-    // Initialize audio engine
-    AudioPlayer audio;
-    if (!audio_path.empty()) {
-        audio.init(audio_path);
-    } else {
-        audio.init(""); // Uses high-precision fallback RTC timer
-    }
+    // Initialize configuration
+    g_config.load();
 
     // Initialize hardware renderer
-    HighwayRenderer renderer;
-    if (!renderer.init()) {
+    if (!g_renderer.init()) {
 #ifdef __PSP__
         pspDebugScreenPrintf("Error: Failed to initialize PSP GU.\n");
         while (!g_exit_requested) { sceDisplayWaitVblankStart(); }
@@ -170,11 +92,30 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Start playback
-    audio.play();
+    // Scan for available songs in "song/"
+    g_song_manager.scanSongs("song");
 
-    GameplayStats stats;
-    stats.autoplay = true; // Default to autoplay for demonstration
+    AudioPlayer audio;
+    HighwayRenderer highway;
+    GameSession session;
+
+    ChartSong current_chart_song;
+    ChartTrack current_active_track;
+    std::string current_diff_name = "Expert";
+    size_t current_song_idx = 0;
+    bool is_new_best = false;
+
+    // Menu state variables
+    AppState state = STATE_TITLE;
+    int menu_idx = 0;
+    int song_scroll_offset = 0;
+    int selected_diff_idx = 0;
+    int options_idx = 0;
+    int remapper_idx = 0;
+    bool is_listening_button = false;
+    int pause_idx = 0;
+
+    double last_time = getRealTimeSeconds();
 
 #ifdef __PSP__
     SceCtrlData old_pad;
@@ -184,168 +125,453 @@ int main(int argc, char* argv[]) {
     const double HIT_WINDOW = 0.120; // 120ms hit window
 
     while (!g_exit_requested) {
+        double now = getRealTimeSeconds();
+        float dt = static_cast<float>(now - last_time);
+        if (dt <= 0.0f || dt > 0.1f) dt = 0.016f;
+        last_time = now;
+
         uint32_t buttons_down = 0;
-        uint32_t held_frets_mask = 0;
-        bool is_paused = !audio.isPlaying();
+        uint32_t buttons_held = 0;
 
 #ifdef __PSP__
         SceCtrlData pad;
         sceCtrlPeekBufferPositive(&pad, 1);
-
+        buttons_held = pad.Buttons;
         buttons_down = pad.Buttons & ~old_pad.Buttons;
         old_pad = pad;
-
-        // --- BUTTON HANDLING ---
-
-        // START: Toggle Pause / Resume
-        if (buttons_down & PSP_CTRL_START) {
-            audio.togglePause();
-        }
-
-        // SELECT: Toggle Autoplay mode
-        if (buttons_down & PSP_CTRL_SELECT) {
-            stats.autoplay = !stats.autoplay;
-        }
-
-        // L / R Triggers: Seek -5s / +5s
-        if (buttons_down & PSP_CTRL_LTRIGGER) {
-            double cur = audio.getTimeSeconds();
-            double target = (cur > 5.0) ? cur - 5.0 : 0.0;
-            audio.seek(target);
-            // Reset future notes hit state after rewind
-            for (auto& n : active_track.notes) {
-                if (n.time_seconds >= target) {
-                    n.hit = false;
-                    n.missed = false;
-                }
-            }
-        }
-        if (buttons_down & PSP_CTRL_RTRIGGER) {
-            double cur = audio.getTimeSeconds();
-            audio.seek(cur + 5.0);
-        }
-
-        // SQUARE: Restart song from beginning when paused
-        if (is_paused && (buttons_down & PSP_CTRL_SQUARE)) {
-            audio.seek(0.0);
-            for (auto& n : active_track.notes) {
-                n.hit = false;
-                n.missed = false;
-            }
-            stats.score = 0;
-            stats.streak = 0;
-            stats.multiplier = 1;
-            stats.notes_hit = 0;
-            stats.notes_missed = 0;
-        }
-
-        // Map buttons to frets:
-        // Left D-Pad  -> Green (0)
-        // Down / Up D-Pad -> Red (1)
-        // Triangle    -> Yellow (2)
-        // Circle      -> Blue (3)
-        // Cross       -> Orange (4)
-        if (pad.Buttons & PSP_CTRL_LEFT)                   held_frets_mask |= (1u << LANE_GREEN);
-        if (pad.Buttons & (PSP_CTRL_DOWN | PSP_CTRL_UP))   held_frets_mask |= (1u << LANE_RED);
-        if (pad.Buttons & PSP_CTRL_TRIANGLE)               held_frets_mask |= (1u << LANE_YELLOW);
-        if (pad.Buttons & PSP_CTRL_CIRCLE)                 held_frets_mask |= (1u << LANE_BLUE);
-        if (pad.Buttons & PSP_CTRL_CROSS)                  held_frets_mask |= (1u << LANE_ORANGE);
 #endif
 
-        double current_time = audio.getTimeSeconds();
+        // Global background animation tick
+        g_renderer.updateBackground(dt, 120.0f, session.star_active);
 
-        // --- GAMEPLAY HIT DETECTION ---
+        // --- STATE MACHINE DISPATCH ---
 
-        if (stats.autoplay) {
-            // Autoplay mode: Automatically strike notes when they cross the strikeline
-            for (size_t i = 0; i < active_track.notes.size(); ++i) {
-                auto& note = active_track.notes[i];
-                if (!note.hit && current_time >= note.time_seconds) {
-                    note.hit = true;
-                    if (note.lane >= 0 && note.lane < 5) {
-                        renderer.triggerHitSpark(note.lane);
-                        held_frets_mask |= (1u << note.lane);
+        if (state == STATE_TITLE) {
+            if (buttons_down & (PSP_CTRL_START | PSP_CTRL_CROSS)) {
+                state = STATE_MAIN_MENU;
+                menu_idx = 0;
+            }
+
+            g_renderer.beginFrame();
+            MenuScreens::renderTitle(static_cast<float>(now));
+            g_renderer.endFrame();
+        }
+        else if (state == STATE_MAIN_MENU) {
+            // Navigation
+            if (buttons_down & PSP_CTRL_UP) {
+                menu_idx = (menu_idx - 1 + 3) % 3;
+            }
+            if (buttons_down & PSP_CTRL_DOWN) {
+                menu_idx = (menu_idx + 1) % 3;
+            }
+
+            // Confirm selection
+            if (buttons_down & PSP_CTRL_CROSS) {
+                if (menu_idx == 0) {
+                    // Quick Play
+                    if (g_song_manager.getSongCount() > 0) {
+                        current_song_idx = 0;
+                        selected_diff_idx = 0;
+                        state = STATE_DIFFICULTY_SELECT;
                     }
-                    stats.notes_hit++;
-                    stats.streak++;
-                    if (stats.streak > stats.max_streak) stats.max_streak = stats.streak;
-                    stats.multiplier = 1 + std::min<uint32_t>(stats.streak / 10, 3);
-                    stats.score += 50 * stats.multiplier;
+                } else if (menu_idx == 1) {
+                    // Song Select
+                    state = STATE_SONG_SELECT;
+                } else if (menu_idx == 2) {
+                    // Options
+                    state = STATE_OPTIONS;
+                    options_idx = 0;
                 }
             }
-        } else {
-            // Manual mode: Check user input against notes in the hit window
-            if (buttons_down) {
-                for (int lane = 0; lane < 5; ++lane) {
-                    bool lane_pressed = false;
-                    if (lane == LANE_GREEN  && (buttons_down & PSP_CTRL_LEFT))                 lane_pressed = true;
-                    if (lane == LANE_RED    && (buttons_down & (PSP_CTRL_DOWN | PSP_CTRL_UP))) lane_pressed = true;
-                    if (lane == LANE_YELLOW && (buttons_down & PSP_CTRL_TRIANGLE))             lane_pressed = true;
-                    if (lane == LANE_BLUE   && (buttons_down & PSP_CTRL_CIRCLE))               lane_pressed = true;
-                    if (lane == LANE_ORANGE && (buttons_down & PSP_CTRL_CROSS))                lane_pressed = true;
 
-                    if (lane_pressed) {
-                        // Find closest unhit note on this lane within hit window
-                        for (auto& note : active_track.notes) {
-                            if (!note.hit && !note.missed && note.lane == lane) {
-                                double dt = std::abs(note.time_seconds - current_time);
-                                if (dt <= HIT_WINDOW) {
-                                    note.hit = true;
-                                    renderer.triggerHitSpark(lane);
-                                    stats.notes_hit++;
-                                    stats.streak++;
-                                    if (stats.streak > stats.max_streak) stats.max_streak = stats.streak;
-                                    stats.multiplier = 1 + std::min<uint32_t>(stats.streak / 10, 3);
-                                    stats.score += 50 * stats.multiplier;
-                                    break;
-                                }
-                            }
+            // (NOTE: NO QUIT BUTTON ON MAIN MENU!)
+
+            g_renderer.beginFrame();
+            MenuScreens::renderMainMenu(menu_idx);
+            g_renderer.endFrame();
+        }
+        else if (state == STATE_SONG_SELECT) {
+            size_t count = g_song_manager.getSongCount();
+
+            if (buttons_down & PSP_CTRL_UP) {
+                if (current_song_idx > 0) {
+                    current_song_idx--;
+                    if (static_cast<int>(current_song_idx) < song_scroll_offset) {
+                        song_scroll_offset = static_cast<int>(current_song_idx);
+                    }
+                }
+            }
+            if (buttons_down & PSP_CTRL_DOWN) {
+                if (current_song_idx + 1 < count) {
+                    current_song_idx++;
+                    if (static_cast<int>(current_song_idx) >= song_scroll_offset + 4) {
+                        song_scroll_offset = static_cast<int>(current_song_idx) - 3;
+                    }
+                }
+            }
+
+            if (buttons_down & PSP_CTRL_CROSS && count > 0) {
+                selected_diff_idx = 0;
+                state = STATE_DIFFICULTY_SELECT;
+            }
+
+            if (buttons_down & PSP_CTRL_CIRCLE) {
+                state = STATE_MAIN_MENU;
+            }
+
+            g_renderer.beginFrame();
+            MenuScreens::renderSongSelect(g_song_manager.getSongs(), current_song_idx, song_scroll_offset);
+            g_renderer.endFrame();
+        }
+        else if (state == STATE_DIFFICULTY_SELECT) {
+            const SongItem* song = g_song_manager.getSong(current_song_idx);
+
+            if (buttons_down & PSP_CTRL_UP) {
+                selected_diff_idx = (selected_diff_idx - 1 + 4) % 4;
+            }
+            if (buttons_down & PSP_CTRL_DOWN) {
+                selected_diff_idx = (selected_diff_idx + 1) % 4;
+            }
+
+            if (buttons_down & PSP_CTRL_CIRCLE) {
+                state = STATE_SONG_SELECT;
+            }
+
+            if (buttons_down & PSP_CTRL_CROSS && song) {
+                static const char* diff_names[4] = { "Easy", "Medium", "Hard", "Expert" };
+                std::string chosen_diff = diff_names[selected_diff_idx];
+
+                // Load chart file
+                if (ChartParser::loadChartFile(song->chart_path, current_chart_song)) {
+                    if (!song->ini_path.empty()) {
+                        ChartParser::loadSongIni(song->ini_path, current_chart_song);
+                    }
+
+                    // Find track
+                    const ChartTrack* track = nullptr;
+                    for (const auto& t : current_chart_song.tracks) {
+                        if (t.difficulty == chosen_diff) {
+                            track = &t;
+                            break;
                         }
+                    }
+                    if (!track) track = current_chart_song.getDefaultTrack();
+
+                    if (track) {
+                        current_active_track = *track;
+                        current_diff_name = track->difficulty;
+
+                        // Initialize audio
+                        audio.init(song->audio_path);
+                        audio.play();
+
+                        session.reset();
+                        is_new_best = false;
+                        state = STATE_GAMEPLAY;
+                    }
+                }
+            }
+
+            g_renderer.beginFrame();
+            if (song) {
+                MenuScreens::renderDifficultySelect(*song, selected_diff_idx);
+            }
+            g_renderer.endFrame();
+        }
+        else if (state == STATE_OPTIONS) {
+            if (buttons_down & PSP_CTRL_UP) {
+                options_idx = (options_idx - 1 + 6) % 6;
+            }
+            if (buttons_down & PSP_CTRL_DOWN) {
+                options_idx = (options_idx + 1) % 6;
+            }
+
+            // Adjust values Left/Right
+            int dir = 0;
+            if (buttons_down & PSP_CTRL_LEFT) dir = -1;
+            if (buttons_down & PSP_CTRL_RIGHT) dir = 1;
+
+            if (dir != 0) {
+                switch (options_idx) {
+                    case 1:
+                        g_config.note_speed = std::clamp(g_config.note_speed + dir, 1, 5);
+                        break;
+                    case 2:
+                        g_config.strum_required = !g_config.strum_required;
+                        break;
+                    case 3:
+                        g_config.autoplay = !g_config.autoplay;
+                        break;
+                    case 4:
+                        g_config.audio_offset_ms = std::clamp(g_config.audio_offset_ms + dir * 10, -200, 200);
+                        break;
+                    case 5:
+                        g_config.background_fx = !g_config.background_fx;
+                        break;
+                }
+                g_config.save();
+            }
+
+            if (buttons_down & PSP_CTRL_CROSS) {
+                if (options_idx == 0) {
+                    state = STATE_REMAPPER;
+                    remapper_idx = 0;
+                    is_listening_button = false;
+                } else if (options_idx == 1) {
+                    g_config.note_speed = (g_config.note_speed % 5) + 1;
+                    g_config.save();
+                } else if (options_idx == 2) {
+                    g_config.strum_required = !g_config.strum_required;
+                    g_config.save();
+                } else if (options_idx == 3) {
+                    g_config.autoplay = !g_config.autoplay;
+                    g_config.save();
+                } else if (options_idx == 5) {
+                    g_config.background_fx = !g_config.background_fx;
+                    g_config.save();
+                }
+            }
+
+            if (buttons_down & PSP_CTRL_CIRCLE) {
+                g_config.save();
+                state = STATE_MAIN_MENU;
+            }
+
+            g_renderer.beginFrame();
+            MenuScreens::renderOptions(options_idx);
+            g_renderer.endFrame();
+        }
+        else if (state == STATE_REMAPPER) {
+            const int total_rows = ACTION_COUNT + 1;
+
+            if (is_listening_button) {
+                if (buttons_down != 0) {
+                    if (buttons_down & PSP_CTRL_CIRCLE && buttons_down == PSP_CTRL_CIRCLE) {
+                        // Cancel
+                        is_listening_button = false;
+                    } else {
+                        // Assign the pressed button mask
+                        g_config.buttons[remapper_idx] = buttons_down;
+                        g_config.save();
+                        is_listening_button = false;
+                    }
+                }
+            } else {
+                if (buttons_down & PSP_CTRL_UP) {
+                    remapper_idx = (remapper_idx - 1 + total_rows) % total_rows;
+                }
+                if (buttons_down & PSP_CTRL_DOWN) {
+                    remapper_idx = (remapper_idx + 1) % total_rows;
+                }
+
+                if (buttons_down & PSP_CTRL_CROSS) {
+                    if (remapper_idx == ACTION_COUNT) {
+                        g_config.resetToDefaults();
+                        g_config.save();
+                    } else {
+                        is_listening_button = true;
                     }
                 }
 
-                // Open note check (Lane 7) with Square button
-                if (buttons_down & PSP_CTRL_SQUARE) {
-                    for (auto& note : active_track.notes) {
-                        if (!note.hit && !note.missed && note.lane == LANE_OPEN) {
-                            double dt = std::abs(note.time_seconds - current_time);
-                            if (dt <= HIT_WINDOW) {
-                                note.hit = true;
-                                stats.notes_hit++;
-                                stats.streak++;
-                                if (stats.streak > stats.max_streak) stats.max_streak = stats.streak;
-                                stats.multiplier = 1 + std::min<uint32_t>(stats.streak / 10, 3);
-                                stats.score += 50 * stats.multiplier;
+                if (buttons_down & PSP_CTRL_CIRCLE) {
+                    g_config.save();
+                    state = STATE_OPTIONS;
+                }
+            }
+
+            g_renderer.beginFrame();
+            MenuScreens::renderRemapper(remapper_idx, is_listening_button);
+            g_renderer.endFrame();
+        }
+        else if (state == STATE_GAMEPLAY) {
+            double current_time = audio.getTimeSeconds() + (g_config.audio_offset_ms / 1000.0);
+            session.update(dt);
+            highway.update(dt);
+
+            // Check pause
+            if (buttons_down & g_config.buttons[ACTION_PAUSE]) {
+                audio.togglePause();
+                state = STATE_PAUSE;
+                pause_idx = 0;
+            }
+
+            // Star power activation
+            if (buttons_down & g_config.buttons[ACTION_STAR_POWER]) {
+                session.activateStarPower();
+            }
+
+            // Read held frets according to button bindings
+            uint32_t held_frets_mask = 0;
+            for (int lane = 0; lane < 5; ++lane) {
+                if (buttons_held & g_config.buttons[ACTION_FRET_GREEN + lane]) {
+                    held_frets_mask |= (1u << lane);
+                }
+            }
+
+            // Note hitting logic
+            if (g_config.autoplay) {
+                // Autoplay mode
+                for (auto& n : current_active_track.notes) {
+                    if (!n.hit && !n.missed && n.time_seconds <= current_time) {
+                        n.hit = true;
+                        held_frets_mask |= (1u << n.lane);
+                        session.onHit(n.lane, 0.0, 1);
+                        highway.triggerHitFX(n.lane, session.streak);
+                        g_renderer.triggerBackgroundHit(n.lane, 1.0f);
+                    }
+                }
+            } else {
+                // Manual Play
+                bool strum_hit = !g_config.strum_required;
+                if (buttons_down & (g_config.buttons[ACTION_STRUM_UP] | g_config.buttons[ACTION_STRUM_DOWN])) {
+                    strum_hit = true;
+                }
+
+                // Fret press detection for tap mode
+                uint32_t frets_pressed_now = 0;
+                for (int lane = 0; lane < 5; ++lane) {
+                    if (buttons_down & g_config.buttons[ACTION_FRET_GREEN + lane]) {
+                        frets_pressed_now |= (1u << lane);
+                    }
+                }
+
+                if (!g_config.strum_required && frets_pressed_now != 0) {
+                    strum_hit = true;
+                }
+
+                if (strum_hit) {
+                    bool note_hit_this_strum = false;
+                    for (auto& n : current_active_track.notes) {
+                        if (n.hit || n.missed) continue;
+                        double diff = n.time_seconds - current_time;
+                        if (diff > HIT_WINDOW) break;
+
+                        if (std::abs(diff) <= HIT_WINDOW) {
+                            if (n.lane == LANE_OPEN || (held_frets_mask & (1u << n.lane))) {
+                                n.hit = true;
+                                note_hit_this_strum = true;
+                                session.onHit(n.lane, diff, 1);
+                                highway.triggerHitFX(n.lane, session.streak);
+                                g_renderer.triggerBackgroundHit(n.lane, 1.0f);
                                 break;
                             }
                         }
                     }
+
+                    if (!note_hit_this_strum && g_config.strum_required) {
+                        session.onOverstrum();
+                    }
+                }
+
+                // Check for missed notes
+                for (auto& n : current_active_track.notes) {
+                    if (!n.hit && !n.missed && (current_time - n.time_seconds) > HIT_WINDOW) {
+                        n.missed = true;
+                        session.onMiss();
+                    }
                 }
             }
 
-            // Miss detection: Notes that passed beyond the hit window without being hit
-            for (auto& note : active_track.notes) {
-                if (!note.hit && !note.missed && current_time > (note.time_seconds + HIT_WINDOW)) {
-                    note.missed = true;
-                    stats.notes_missed++;
-                    stats.streak = 0;
-                    stats.multiplier = 1;
+            // Check song failure or completion
+            if (session.failed) {
+                audio.togglePause();
+                state = STATE_RESULTS;
+            } else if (current_time > current_chart_song.total_duration_seconds + 2.5 && current_chart_song.total_duration_seconds > 0.0) {
+                audio.togglePause();
+                const SongItem* song = g_song_manager.getSong(current_song_idx);
+                if (song) {
+                    uint32_t prev_best = g_song_manager.getBestScore(song->id, current_diff_name);
+                    if (session.score > prev_best) {
+                        is_new_best = true;
+                        g_song_manager.setBestScore(song->id, current_diff_name, session.score);
+                    }
                 }
+                state = STATE_RESULTS;
             }
+
+            g_renderer.beginFrame();
+            highway.render(current_chart_song, current_active_track, current_time,
+                           g_config.getTravelTime(), session, held_frets_mask, false);
+            g_renderer.endFrame();
         }
+        else if (state == STATE_PAUSE) {
+            if (buttons_down & PSP_CTRL_UP) {
+                pause_idx = (pause_idx - 1 + 3) % 3;
+            }
+            if (buttons_down & PSP_CTRL_DOWN) {
+                pause_idx = (pause_idx + 1) % 3;
+            }
 
-        // --- RENDER FRAME ---
-        renderer.beginFrame();
-        renderer.render(song, active_track, current_time, stats, is_paused, held_frets_mask);
-        renderer.endFrame();
+            if (buttons_down & (PSP_CTRL_START | PSP_CTRL_CIRCLE)) {
+                audio.togglePause();
+                state = STATE_GAMEPLAY;
+            }
+
+            if (buttons_down & PSP_CTRL_CROSS) {
+                if (pause_idx == 0) {
+                    // Resume
+                    audio.togglePause();
+                    state = STATE_GAMEPLAY;
+                } else if (pause_idx == 1) {
+                    // Restart
+                    audio.seek(0.0);
+                    for (auto& n : current_active_track.notes) {
+                        n.hit = false;
+                        n.missed = false;
+                    }
+                    session.reset();
+                    audio.play();
+                    state = STATE_GAMEPLAY;
+                } else if (pause_idx == 2) {
+                    // Quit to Songs (YES: Pause menu has Quit button!)
+                    audio.init("");
+                    state = STATE_SONG_SELECT;
+                }
+            }
+
+            g_renderer.beginFrame();
+            double cur_time = audio.getTimeSeconds();
+            highway.render(current_chart_song, current_active_track, cur_time,
+                           g_config.getTravelTime(), session, 0, true);
+            MenuScreens::renderPause(pause_idx);
+            g_renderer.endFrame();
+        }
+        else if (state == STATE_RESULTS) {
+            const SongItem* song = g_song_manager.getSong(current_song_idx);
+
+            if (buttons_down & PSP_CTRL_CROSS) {
+                // Retry
+                if (song) {
+                    for (auto& n : current_active_track.notes) {
+                        n.hit = false;
+                        n.missed = false;
+                    }
+                    audio.seek(0.0);
+                    audio.play();
+                    session.reset();
+                    is_new_best = false;
+                    state = STATE_GAMEPLAY;
+                }
+            }
+            if (buttons_down & PSP_CTRL_CIRCLE) {
+                // Back to Songs
+                audio.init("");
+                state = STATE_SONG_SELECT;
+            }
+
+            g_renderer.beginFrame();
+            if (song) {
+                MenuScreens::renderResults(*song, current_diff_name, session, is_new_best);
+            }
+            g_renderer.endFrame();
+        }
     }
 
-    // Cleanup
-    audio.shutdown();
-    renderer.shutdown();
+    g_renderer.shutdown();
 
 #ifdef __PSP__
     sceKernelExitGame();
 #endif
+
     return 0;
 }
